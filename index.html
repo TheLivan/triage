@@ -6,58 +6,61 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Triage Report</title>
   <style>
+    :root { color-scheme: light; --bg: #f4f6f9; --fg: #182437; --panel: #fff; --border: #d9e1eb; --muted: #435370; --control: #bbc8da; --hover: #edf3fc; --accent: #2559ad; --accent-hover: #1c478e; --danger: #a52222; --row-border: #e3e9f1; --th: #eaf0f8; --row-hover: #f5f8fc; --link: #204c91; --subtle: #f8fafd; --badge: #e9eef5; --bug-bg: #fbe9e9; --bug: #8d2020; --fp-bg: #e1f4eb; --fp: #125c43; --wf-bg: #e7efff; --wf: #244988; --unsure-bg: #fff1da; --unsure: #754800; }
+    :root[data-theme="dark"] { color-scheme: dark; --bg: #0f141b; --fg: #dbe3ee; --panel: #171e28; --border: #2a3442; --muted: #9aa8bc; --control: #3a4658; --hover: #222c3a; --accent: #3a74d1; --accent-hover: #4c84de; --danger: #f08080; --row-border: #263040; --th: #1d2633; --row-hover: #1c2532; --link: #8fb4f0; --subtle: #131a23; --badge: #263040; --bug-bg: #3d1f22; --bug: #f3a5a5; --fp-bg: #173528; --fp: #8fdcb7; --wf-bg: #1d2a45; --wf: #a9c3f5; --unsure-bg: #3a2c12; --unsure: #f0c77a; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
     * { box-sizing: border-box; }
-    body { margin: 0; padding: 24px; background: #f4f6f9; color: #182437; font: 14px/1.45 system-ui, sans-serif; }
-    h1 { margin: 0 0 16px; font-size: 24px; letter-spacing: -.025em; }
-    .panel { padding: 16px; background: #fff; border: 1px solid #d9e1eb; border-radius: 10px; }
+    body { margin: 0; padding: 24px; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
+    h1 { margin: 0; font-size: 24px; letter-spacing: -.025em; }
+    .panel { padding: 16px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
     .files { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; gap: 8px 12px; }
-    .path { overflow-wrap: anywhere; color: #435370; }
+    .path { overflow-wrap: anywhere; color: var(--muted); }
     .settings, .toolbar, .meter { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }
     .settings, .meter { margin-top: 14px; }
     .settings label { display: grid; gap: 4px; }
     .toolbar { margin: 16px 0 8px; align-items: center; }
     .toolbar > label { margin-right: auto; }
     button, input, select { font: inherit; color: inherit; }
-    button, input, select { border: 1px solid #bbc8da; border-radius: 6px; background: #fff; min-height: 32px; padding: 5px 9px; }
+    button, input, select { border: 1px solid var(--control); border-radius: 6px; background: var(--panel); min-height: 32px; padding: 5px 9px; }
     button { cursor: pointer; }
-    button:hover:enabled { background: #edf3fc; }
+    button:hover:enabled { background: var(--hover); }
     button:disabled, select:disabled, input:disabled { opacity: .55; cursor: default; }
-    #start { color: #fff; background: #2559ad; border-color: #2559ad; }
-    #start:hover:enabled { background: #1c478e; }
+    #start { color: #fff; background: var(--accent); border-color: var(--accent); }
+    #start:hover:enabled { background: var(--accent-hover); }
     #model { min-width: 200px; max-width: min(420px, 70vw); }
     #concurrency { width: 76px; }
     .meter { align-items: center; }
-    progress { width: min(320px, 60vw); accent-color: #2559ad; }
+    progress { width: min(320px, 60vw); accent-color: var(--accent); }
     #count { font-variant-numeric: tabular-nums; }
-    #error { color: #a52222; white-space: pre-wrap; overflow-wrap: anywhere; }
+    #error { color: var(--danger); white-space: pre-wrap; overflow-wrap: anywhere; }
     #error:empty { display: none; }
     .results { overflow: auto; max-height: 60vh; padding: 0; }
     table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 760px; }
-    th, td { border-bottom: 1px solid #e3e9f1; padding: 9px 11px; text-align: left; vertical-align: top; }
-    th { position: sticky; top: 0; background: #eaf0f8; white-space: nowrap; }
+    th, td { border-bottom: 1px solid var(--row-border); padding: 9px 11px; text-align: left; vertical-align: top; }
+    th { position: sticky; top: 0; background: var(--th); white-space: nowrap; }
     th button, .file { border: 0; padding: 0; min-height: 0; background: transparent; text-align: left; }
     th button { font-weight: 650; }
     th[aria-sort="ascending"] button::after { content: " ↑"; }
     th[aria-sort="descending"] button::after { content: " ↓"; }
     tr[data-index] { cursor: pointer; }
-    tr[data-index]:hover { background: #f5f8fc; }
+    tr[data-index]:hover { background: var(--row-hover); }
     td { overflow-wrap: anywhere; }
     td:nth-child(3) { width: 19%; }
     td:nth-child(4), td:nth-child(7) { width: 26%; }
-    .file { color: #204c91; overflow-wrap: anywhere; }
+    .file { color: var(--link); overflow-wrap: anywhere; }
     .file:hover { text-decoration: underline; }
-    .empty, .detail { background: #f8fafd; color: #435370; }
+    .empty, .detail { background: var(--subtle); color: var(--muted); }
     .detail pre { margin: 3px 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
-    .badge { display: inline-block; padding: 2px 7px; border-radius: 4px; background: #e9eef5; white-space: nowrap; }
-    .bug, .error { background: #fbe9e9; color: #8d2020; }
-    .false_positive { background: #e1f4eb; color: #125c43; }
-    .wont_fix, .running { background: #e7efff; color: #244988; }
-    .unsure { background: #fff1da; color: #754800; }
+    .badge { display: inline-block; padding: 2px 7px; border-radius: 4px; background: var(--badge); white-space: nowrap; }
+    .bug, .error { background: var(--bug-bg); color: var(--bug); }
+    .false_positive { background: var(--fp-bg); color: var(--fp); }
+    .wont_fix, .running { background: var(--wf-bg); color: var(--wf); }
+    .unsure { background: var(--unsure-bg); color: var(--unsure); }
   </style>
   <script defer src="build/renderer.js"></script>
 </head>
 <body>
-  <h1>Triage Report</h1>
+  <header><h1>Triage Report</h1><button id="theme" aria-label="Toggle dark theme"></button></header>
   <section class="panel" aria-label="Triage controls">
     <div class="files">
       <button id="open-report">Open report…</button><span class="path" id="report-path"></span>

@@ -177,6 +177,19 @@ start.onclick = async () => {
 }
 stopButton.onclick = () => api.stop()
 
+const theme = document.querySelector<HTMLButtonElement>('#theme')!
+const applyTheme = (dark: boolean) => {
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+  theme.textContent = dark ? 'Light theme' : 'Dark theme'
+  theme.setAttribute('aria-pressed', String(dark))
+}
+applyTheme((localStorage.getItem('theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark')
+theme.onclick = () => {
+  const dark = document.documentElement.dataset.theme !== 'dark'
+  localStorage.setItem('theme', dark ? 'dark' : 'light')
+  applyTheme(dark)
+}
+
 void action(async () => {
   const models = await api.models()
   model.replaceChildren(...models.map(name => new Option(name, name)))
