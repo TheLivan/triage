@@ -132,14 +132,14 @@ export async function runOpenCode(cwd: string, args: string[], signal?: AbortSig
   try {
     // opencode resolves its project config from PWD, not the process cwd
     const { stdout } = await exec('opencode', args, {
-      cwd, env: { ...process.env, PWD: cwd }, signal, timeout: 600_000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024,
+      cwd, env: { ...process.env, PWD: cwd }, signal, timeout: 120_000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024,
     })
     return stdout
   } catch (error) {
     const { code, killed, stdout, stderr } = error as NodeJS.ErrnoException & { killed?: boolean; stdout?: string; stderr?: string }
     if (signal?.aborted) throw error
     if (code === 'ENOENT') throw new Error('OpenCode was not found on PATH.')
-    if (killed && !code) throw new Error('OpenCode timed out after 10 minutes.')
+    if (killed && !code) throw Object.assign(new Error('OpenCode timed out after 2 minutes.'), { name: 'TimeoutError' })
     throw new Error(eventError(stdout ?? '') || stderr?.trim().slice(0, 500) || `OpenCode failed (${code ?? 'process terminated'}).`)
   }
 }
@@ -155,11 +155,19 @@ export async function triage(cwd: string, model: string, prompt: string, signal:
       .filter(part => typeof part === 'string').join('')
   }
 
-  // only a malformed answer is worth retrying; process and provider failures are deterministic
-  const first = await text()
-  try {
-    return parseAnswer(first)
-  } catch {
-    return parseAnswer(await text())
+  // retry a stalled provider stream or a malformed answer once; other failures are deterministic
+  for (let attempt = 1; ; attempt++) {
+    let answer: string
+    try {
+      answer = await text()
+    } catch (error) {
+      if (attempt < 2 && error instanceof Error && error.name === 'TimeoutError') continue
+      throw error
+    }
+    try {
+      return parseAnswer(answer)
+    } catch (error) {
+      if (attempt === 2) throw error
+    }
   }
 }

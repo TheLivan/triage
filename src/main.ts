@@ -42,7 +42,8 @@ ipcMain.handle('start', async (_event, model: string, concurrency: number, maxLe
   if (run) throw new Error('Triage is already running.')
   if (!report || !root) throw new Error('Choose a report and project root.')
   if (!models.includes(model)) throw new Error('Choose an available model.')
-  if (!Number.isSafeInteger(concurrency) || concurrency < 1) throw new Error('Concurrency must be a positive integer.')
+  // measured: above 8 the shared opencode service gets slower, not faster
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 8) throw new Error('Concurrency must be from 1 to 8.')
   if (![1, 2, 3].includes(maxLevel)) throw new Error('Choose a maximum warning level from 1 to 3.')
 
   const projectRoot = root
