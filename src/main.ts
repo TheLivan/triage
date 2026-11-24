@@ -35,19 +35,21 @@ ipcMain.handle('open-root', async () => {
 ipcMain.handle('models', async () => {
   const output = await runOpenCode(appRoot, ['models'])
   const base = [...new Set(output.split(/\r?\n/).map(line => line.trim()).filter(line => /^[^/\s]+\/[^\s]+$/.test(line)))]
-  const low = new Set<string>()
+  // fast variants: 'none' skips reasoning, 'low' keeps a little
+  const variants = new Map<string, string[]>()
   try {
     const metadata = await runOpenCode(appRoot, ['api', 'model.list'])
     const { data } = JSON.parse(metadata) as {
       data: { providerID: string; id: string; variants: { id: string }[] }[]
     }
-    for (const { providerID, id, variants } of data) {
-      if (variants?.some(variant => variant.id === 'low')) low.add(`${providerID}/${id}`)
+    for (const { providerID, id, variants: modelVariants } of data) {
+      const fast = ['none', 'low'].filter(name => modelVariants?.some(variant => variant.id === name))
+      if (fast.length) variants.set(`${providerID}/${id}`, fast)
     }
   } catch {
     // Older OpenCode versions may only support the plain model list.
   }
-  models = base.flatMap(id => low.has(id) ? [id, id + '#low'] : [id])
+  models = base.flatMap(id => [id, ...(variants.get(id) ?? []).map(name => `${id}#${name}`)])
   return models
 })
 
@@ -55,8 +57,8 @@ ipcMain.handle('start', async (_event, model: string, concurrency: number, maxLe
   if (run) throw new Error('Triage is already running.')
   if (!report || !root) throw new Error('Choose a report and project root.')
   if (!models.includes(model)) throw new Error('Choose an available model.')
-  // measured: above 8 the shared opencode service gets slower, not faster
-  if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 8) throw new Error('Concurrency must be from 1 to 8.')
+  // measured: OpenAI fast models scale to 16; slow providers stall earlier, so the user tunes it
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 16) throw new Error('Concurrency must be from 1 to 16.')
   if (![1, 2, 3].includes(maxLevel)) throw new Error('Choose a maximum warning level from 1 to 3.')
 
   const projectRoot = root
