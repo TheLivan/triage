@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Triage Report</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; background: #f4f6f9; color: #182437; font: 14px/1.45 system-ui, sans-serif; }
+    h1 { margin: 0 0 16px; font-size: 24px; letter-spacing: -.025em; }
+    .panel { padding: 16px; background: #fff; border: 1px solid #d9e1eb; border-radius: 10px; }
+    .files { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; gap: 8px 12px; }
+    .path { overflow-wrap: anywhere; color: #435370; }
+    .settings, .toolbar, .meter { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }
+    .settings, .meter { margin-top: 14px; }
+    .settings label { display: grid; gap: 4px; }
+    .toolbar { margin: 16px 0 8px; align-items: center; }
+    .toolbar > label { margin-right: auto; }
+    button, input, select { font: inherit; color: inherit; }
+    button, input, select { border: 1px solid #bbc8da; border-radius: 6px; background: #fff; min-height: 32px; padding: 5px 9px; }
+    button { cursor: pointer; }
+    button:hover:enabled { background: #edf3fc; }
+    button:disabled, select:disabled, input:disabled { opacity: .55; cursor: default; }
+    #start { color: #fff; background: #2559ad; border-color: #2559ad; }
+    #start:hover:enabled { background: #1c478e; }
+    #model { min-width: 200px; max-width: min(420px, 70vw); }
+    #concurrency { width: 76px; }
+    .meter { align-items: center; }
+    progress { width: min(320px, 60vw); accent-color: #2559ad; }
+    #count { font-variant-numeric: tabular-nums; }
+    #error { color: #a52222; white-space: pre-wrap; overflow-wrap: anywhere; }
+    #error:empty { display: none; }
+    .results { overflow: auto; max-height: 60vh; padding: 0; }
+    table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 760px; }
+    th, td { border-bottom: 1px solid #e3e9f1; padding: 9px 11px; text-align: left; vertical-align: top; }
+    th { position: sticky; top: 0; background: #eaf0f8; white-space: nowrap; }
+    th button, .file { border: 0; padding: 0; min-height: 0; background: transparent; text-align: left; }
+    th button { font-weight: 650; }
+    th[aria-sort="ascending"] button::after { content: " ↑"; }
+    th[aria-sort="descending"] button::after { content: " ↓"; }
+    tr[data-index] { cursor: pointer; }
+    tr[data-index]:hover { background: #f5f8fc; }
+    td { overflow-wrap: anywhere; }
+    td:nth-child(3) { width: 19%; }
+    td:nth-child(4), td:nth-child(7) { width: 26%; }
+    .file { color: #204c91; overflow-wrap: anywhere; }
+    .file:hover { text-decoration: underline; }
+    .empty, .detail { background: #f8fafd; color: #435370; }
+    .detail pre { margin: 3px 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+    .badge { display: inline-block; padding: 2px 7px; border-radius: 4px; background: #e9eef5; white-space: nowrap; }
+    .bug, .error { background: #fbe9e9; color: #8d2020; }
+    .false_positive { background: #e1f4eb; color: #125c43; }
+    .wont_fix, .running { background: #e7efff; color: #244988; }
+    .unsure { background: #fff1da; color: #754800; }
+  </style>
+  <script defer src="build/renderer.js"></script>
+</head>
+<body>
+  <h1>Triage Report</h1>
+  <section class="panel" aria-label="Triage controls">
+    <div class="files">
+      <button id="open-report">Open report…</button><span class="path" id="report-path"></span>
+      <button id="open-root">Project root…</button><span class="path" id="root-path"></span>
+    </div>
+    <div class="settings">
+      <label>Model <select id="model" disabled><option value="">Loading models…</option></select></label>
+      <label>Concurrency <input type="number" id="concurrency" min="1" step="1" value="4" required></label>
+      <label>Max level <select id="max-level"><option>1</option><option selected>2</option><option>3</option></select></label>
+      <button id="start" disabled>Start</button>
+      <button id="stop" disabled>Stop</button>
+    </div>
+    <div class="meter">
+      <progress id="progress" aria-label="Triage progress" max="1" value="0"></progress>
+      <output id="count">0 / 0</output>
+    </div>
+    <p id="error" role="alert"></p>
+  </section>
+  <div class="toolbar">
+    <label>Verdict <select id="filter">
+      <option value="">All verdicts</option>
+      <option>bug</option><option>false_positive</option><option>wont_fix</option><option>unsure</option>
+    </select></label>
+    <button data-export="csv" disabled>Export CSV</button>
+    <button data-export="json" disabled>Export JSON</button>
+  </div>
+  <div class="panel results">
+    <table aria-label="Triage results">
+      <thead>
+        <tr>
+          <th scope="col"><button>Code</button></th>
+          <th scope="col"><button>Level</button></th>
+          <th scope="col"><button>File:Line</button></th>
+          <th scope="col"><button>Message</button></th>
+          <th scope="col"><button>Verdict</button></th>
+          <th scope="col"><button>Confidence</button></th>
+          <th scope="col"><button>Reason</button></th>
+        </tr>
+      </thead>
+      <tbody><tr><td class="empty" colspan="7">No warnings to display.</td></tr></tbody>
+    </table>
+  </div>
+</body>
+</html>

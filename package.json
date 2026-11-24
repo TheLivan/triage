@@ -1,0 +1,19 @@
+{
+  "name": "triage-report",
+  "version": "0.1.0",
+  "private": true,
+  "main": "build/main.js",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "tsc && electron .",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "electron": "^45.4.1",
+    "typescript": "^7.0.2"
+  }
+}
