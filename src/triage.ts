@@ -146,6 +146,40 @@ export function parseBatchAnswer(text: string, ids: readonly number[]): Map<numb
 
 const exec = promisify(execFile)
 
+// output includes reasoning tokens: providers bill them at the output price
+export type Usage = { input: number; output: number; cacheRead: number; cacheWrite: number }
+export type Price = Usage
+export const noUsage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+// shortcut: OpenCode Go limits in USD copied from its docs in 2026-11; update if OpenCode changes them
+export const goLimits = { '5h': 12, week: 30, month: 60 }
+
+export function addUsage(a: Usage, b: Usage, scale = 1): Usage {
+  return {
+    input: a.input + b.input * scale, output: a.output + b.output * scale,
+    cacheRead: a.cacheRead + b.cacheRead * scale, cacheWrite: a.cacheWrite + b.cacheWrite * scale,
+  }
+}
+
+export function usageCost(usage: Usage, price: Price): number {
+  return (usage.input * price.input + usage.output * price.output +
+    usage.cacheRead * price.cacheRead + usage.cacheWrite * price.cacheWrite) / 1_000_000
+}
+
+export function usageOf(stdout: string): Usage {
+  let usage = noUsage
+  for (const event of events(stdout)) {
+    if (event.type !== 'step_finish') continue
+    const tokens = object(object(event.part).tokens)
+    const cache = object(tokens.cache)
+    const n = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : 0
+    usage = addUsage(usage, {
+      input: n(tokens.input), output: n(tokens.output) + n(tokens.reasoning),
+      cacheRead: n(cache.read), cacheWrite: n(cache.write),
+    })
+  }
+  return usage
+}
+
 function events(stdout: string): Record<string, unknown>[] {
   return stdout.split('\n').flatMap(line => {
     try {
@@ -176,30 +210,41 @@ export async function runOpenCode(cwd: string, args: string[], signal?: AbortSig
   } catch (error) {
     const { code, killed, stdout, stderr } = error as NodeJS.ErrnoException & { killed?: boolean; stdout?: string; stderr?: string }
     if (signal?.aborted) throw error
-    if (code === 'ENOENT') throw new Error('OpenCode was not found on PATH.')
-    if (killed && !code) throw Object.assign(new Error(`OpenCode timed out after ${timeout / 1000} seconds.`), { name: 'TimeoutError' })
+    // failed calls keep their stdout: the tokens they streamed were billed
+    const fail = (message: string, name = 'Error') => Object.assign(new Error(message), { name, stdout: stdout ?? '' })
+    if (code === 'ENOENT') throw fail('OpenCode was not found on PATH.')
+    if (killed && !code) throw fail(`OpenCode timed out after ${timeout / 1000} seconds.`, 'TimeoutError')
     const reported = eventError(stdout ?? '')
-    if (reported) throw new Error(reported)
-    throw new Error(stderr?.trim().slice(0, 500) || `OpenCode failed (${code ?? 'process terminated'}).`)
+    if (reported) throw fail(reported)
+    throw fail(stderr?.trim().slice(0, 500) || `OpenCode failed (${code ?? 'process terminated'}).`)
   }
 }
 
-async function requestAnswer(cwd: string, model: string, prompt: string, signal: AbortSignal, timeout?: number): Promise<string> {
+type OnUsage = (usage: Usage) => void
+
+async function requestAnswer(cwd: string, model: string, prompt: string, signal: AbortSignal, onUsage: OnUsage, timeout?: number): Promise<string> {
   signal.throwIfAborted()
   const args = ['run', '--archived', '--format', 'json', '--agent', 'triage', '-m', model, prompt]
-  const stdout = await runOpenCode(cwd, args, signal, timeout)
+  let stdout: string
+  try {
+    stdout = await runOpenCode(cwd, args, signal, timeout)
+  } catch (error) {
+    onUsage(usageOf((error as { stdout?: string }).stdout ?? ''))
+    throw error
+  }
+  onUsage(usageOf(stdout))
   const error = eventError(stdout)
   if (error) throw new Error(error)
   return events(stdout).map(event => event.type === 'text' ? object(event.part).text : undefined)
     .filter(part => typeof part === 'string').join('')
 }
 
-export async function triageBatch(cwd: string, model: string, batch: readonly BatchItem[], signal: AbortSignal): Promise<Map<number, Answer>> {
+export async function triageBatch(cwd: string, model: string, batch: readonly BatchItem[], signal: AbortSignal, onUsage: OnUsage): Promise<Map<number, Answer>> {
   // local ids 1..n: a model that renumbers its answers cannot hit another row
   const local = batch.map(({ prompt }, index) => ({ id: index + 1, prompt }))
   let answer: string
   try {
-    answer = await requestAnswer(cwd, model, buildBatchPrompt(local), signal, 60_000 + 20_000 * (batch.length - 1))
+    answer = await requestAnswer(cwd, model, buildBatchPrompt(local), signal, onUsage, 60_000 + 20_000 * (batch.length - 1))
   } catch (error) {
     if (error instanceof Error && error.name === 'TimeoutError') return new Map()
     throw error
@@ -208,12 +253,12 @@ export async function triageBatch(cwd: string, model: string, batch: readonly Ba
   return new Map([...answers].map(([id, value]) => [batch[id - 1].id, value]))
 }
 
-export async function triage(cwd: string, model: string, prompt: string, signal: AbortSignal): Promise<Answer> {
+export async function triage(cwd: string, model: string, prompt: string, signal: AbortSignal, onUsage: OnUsage): Promise<Answer> {
   // retry a stalled provider stream or a malformed answer once; other failures are deterministic
   for (let attempt = 1; ; attempt++) {
     let answer: string
     try {
-      answer = await requestAnswer(cwd, model, prompt, signal)
+      answer = await requestAnswer(cwd, model, prompt, signal, onUsage)
     } catch (error) {
       if (attempt < 2 && error instanceof Error && error.name === 'TimeoutError') continue
       throw error

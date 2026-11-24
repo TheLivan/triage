@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { buildBatchPrompt, buildPrompt, eventError, parseAnswer, parseBatchAnswer, parseReport, sourcePath, sourceSnippet } from '../src/triage.ts'
+import { addUsage, buildBatchPrompt, buildPrompt, eventError, noUsage, usageCost, usageOf, parseAnswer, parseBatchAnswer, parseReport, sourcePath, sourceSnippet, triage } from '../src/triage.ts'
 
 test('parses the first valid position and skips warnings without one', () => {
   const warning = { code: 'V501', level: 1, message: 'Duplicate operands' }
@@ -100,4 +100,28 @@ test('extracts opencode error events from JSONL', () => {
   assert.equal(eventError('{"type":"text","part":{"text":"x"}}\n'), undefined)
   assert.equal(eventError('noise\n{"type":"error","error":{"message":"Model unavailable: a/b"}}\n'), 'Model unavailable: a/b')
   assert.equal(eventError('{"type":"error","error":{"data":{"message":"402 quota"}}}'), '402 quota')
+})
+
+test('sums usage across step_finish events and prices it', () => {
+  const step = (input: number, output: number, reasoning: number, read: number) =>
+    JSON.stringify({ type: 'step_finish', part: { tokens: { input, output, reasoning, cache: { read, write: 0 } } } })
+  const usage = usageOf([step(1000, 100, 50, 200), '{"type":"text","part":{"text":"x"}}', step(500, 10, 0, 0), 'noise'].join('\n'))
+  assert.deepEqual(usage, { input: 1500, output: 160, cacheRead: 200, cacheWrite: 0 })
+  assert.deepEqual(usageOf(''), noUsage)
+  const price = { input: 0.15, output: 0.6, cacheRead: 0.003, cacheWrite: 0 }
+  assert.equal(usageCost({ input: 1_000_000, output: 1_000_000, cacheRead: 1_000_000, cacheWrite: 0 }, price), 0.753)
+  assert.deepEqual(addUsage(noUsage, usage, 812 / 5), { input: 1500 * 162.4, output: 160 * 162.4, cacheRead: 200 * 162.4, cacheWrite: 0 })
+})
+
+test('counts usage of a failed opencode call', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'triage-bin-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const step = JSON.stringify({ type: 'step_finish', part: { tokens: { input: 700, output: 30, reasoning: 20, cache: { read: 0, write: 0 } } } })
+  await writeFile(join(dir, 'opencode'), `#!/bin/sh\necho '${step}'\nexit 3\n`, { mode: 0o755 })
+  const path = process.env.PATH
+  process.env.PATH = `${dir}:${path}`
+  t.after(() => { process.env.PATH = path })
+  let usage = noUsage
+  await assert.rejects(triage(dir, 'x/y', 'prompt', new AbortController().signal, call => { usage = addUsage(usage, call) }))
+  assert.deepEqual(usage, { input: 700, output: 50, cacheRead: 0, cacheWrite: 0 })
 })

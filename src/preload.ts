@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { Row } from './triage.ts'
 
-export type RunUpdate = { rows: Row[] } | { index: number; row: Row }
+export type RunUpdate = { rows: Row[] } | { index: number; row: Row } | { usage: string }
 
 export type TriageApi = {
   openReport: () => Promise<string | undefined>

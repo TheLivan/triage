@@ -2,7 +2,10 @@ import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { RunUpdate } from './preload.ts'
-import { buildPrompt, parseReport, runOpenCode, sourceSnippet, triage, triageBatch, type BatchItem, type Row } from './triage.ts'
+import {
+  addUsage, buildPrompt, goLimits, noUsage, parseReport, runOpenCode, sourceSnippet, triage, triageBatch, usageCost,
+  type BatchItem, type Price, type Row, type Usage,
+} from './triage.ts'
 
 const appRoot = app.getAppPath()
 let window: BrowserWindow
@@ -10,12 +13,49 @@ let report: string | undefined
 let root: string | undefined
 let models: string[] = []
 let rows: Row[] = []
+let usage = noUsage
+const prices = new Map<string, Price>()
 let run: AbortController | undefined
 
 function clear() {
   if (run) return
   rows = []
+  usage = noUsage
   window.webContents.send('update', { rows })
+  window.webContents.send('update', { usage: '' })
+}
+
+const tokens = (n: number) => n >= 1000 ? `${Math.round(n / 1000)}k` : String(Math.round(n))
+const percent = (cost: number, limit: number) => `${(cost / limit * 100).toFixed(1)}%`
+
+function usageText(total: Usage, model: string): string {
+  const text = `Tokens: ${tokens(total.input + total.cacheRead + total.cacheWrite)} in / ${tokens(total.output)} out`
+  const price = prices.get(model.split('#')[0])
+  if (!price) return text
+  const cost = usageCost(total, price)
+  const go = model.startsWith('opencode-go/') ? ` (${percent(cost, goLimits['5h'])} of Go 5h limit)` : ''
+  return `${text} ≈ $${cost.toFixed(2)}${go}`
+}
+
+async function confirmEstimate(model: string, billed: number, total: number): Promise<boolean> {
+  const estimate = addUsage(noUsage, usage, total / billed)
+  const sum = estimate.input + estimate.output + estimate.cacheRead + estimate.cacheWrite
+  const price = prices.get(model.split('#')[0])
+  let cost = 'Cost unknown: this model is billed by a plan whose limit OpenCode does not report.'
+  if (!sum) cost = 'Usage unknown: OpenCode reported no tokens for the probe.'
+  else if (price) {
+    const usd = usageCost(estimate, price)
+    cost = `≈ $${usd.toFixed(2)}`
+    if (model.startsWith('opencode-go/')) {
+      cost += `\n≈ ${percent(usd, goLimits['5h'])} of the Go 5-hour limit, ${percent(usd, goLimits.week)} weekly, ${percent(usd, goLimits.month)} monthly`
+    }
+  }
+  const { response } = await dialog.showMessageBox(window, {
+    type: 'question', buttons: ['Continue', 'Cancel'], defaultId: 0, cancelId: 1,
+    message: `Triage all ${total} warnings?`,
+    detail: `Estimated from ${billed} warnings sent to the model: ≈ ${tokens(sum)} tokens.\n${cost}`,
+  })
+  return response === 0
 }
 
 ipcMain.handle('open-report', async () => {
@@ -40,9 +80,19 @@ ipcMain.handle('models', async () => {
   try {
     const metadata = await runOpenCode(appRoot, ['api', 'model.list'])
     const { data } = JSON.parse(metadata) as {
-      data: { providerID: string; id: string; variants: { id: string }[] }[]
+      data: {
+        providerID: string; id: string; variants: { id: string }[]
+        cost: { input: number; output: number; cache?: { read?: number; write?: number } }[]
+      }[]
     }
-    for (const { providerID, id, variants: modelVariants } of data) {
+    for (const { providerID, id, variants: modelVariants, cost } of data) {
+      const [price] = cost ?? []
+      // plan-billed models may list an all-zero price; treat that as unknown, not free
+      if (price && (price.input || price.output)) {
+        prices.set(`${providerID}/${id}`, {
+          input: price.input, output: price.output, cacheRead: price.cache?.read ?? 0, cacheWrite: price.cache?.write ?? 0,
+        })
+      }
       const fast = ['none', 'low'].filter(name => modelVariants?.some(variant => variant.id === name))
       if (fast.length) variants.set(`${providerID}/${id}`, fast)
     }
@@ -78,6 +128,10 @@ ipcMain.handle('start', async (_event, model: string, concurrency: number, maxLe
     const row = Object.assign(runRows[index], update)
     send({ index, row })
   }
+  const onUsage = (call: Usage) => {
+    usage = addUsage(usage, call)
+    send({ usage: usageText(usage, model) })
+  }
   const fail = (index: number, error: unknown) => {
     if (!signal.aborted) {
       updateRow(index, { status: 'error', error: error instanceof Error ? error.message : String(error) })
@@ -86,7 +140,9 @@ ipcMain.handle('start', async (_event, model: string, concurrency: number, maxLe
 
   try {
     rows = []
+    usage = noUsage
     send({ rows })
+    send({ usage: '' })
     rows = parseReport(await readFile(report, 'utf8'))
       .filter(warning => warning.level <= maxLevel)
       .map(warning => ({ ...warning, status: 'pending' }))
@@ -94,48 +150,59 @@ ipcMain.handle('start', async (_event, model: string, concurrency: number, maxLe
     send({ rows })
 
     let next = 0
-    const worker = async () => {
-      while (!signal.aborted && next < runRows.length) {
-        const end = Math.min(next + 5, runRows.length)
-        const start = next
-        next = end
-        const batch: BatchItem[] = []
-        for (let id = start; id < end; id++) updateRow(id, { status: 'running' })
-        for (let id = start; id < end && !signal.aborted; id++) {
-          const row = runRows[id]
-          try {
-            row.snippet = await sourceSnippet(projectRoot, row)
-            batch.push({ id, prompt: buildPrompt(row, row.snippet) })
-          } catch (error) {
-            fail(id, error)
-          }
-        }
-        if (signal.aborted || !batch.length) continue
-
-        // one-row and oversized batches go straight to single calls; the prompt is one argv entry
-        const batchable = batch.length > 1 && Buffer.byteLength(batch.map(({ prompt }) => prompt).join('')) < 100_000
-        let answers
+    const runBatch = async () => {
+      const end = Math.min(next + 5, runRows.length)
+      const start = next
+      next = end
+      const batch: BatchItem[] = []
+      for (let id = start; id < end; id++) updateRow(id, { status: 'running' })
+      for (let id = start; id < end && !signal.aborted; id++) {
+        const row = runRows[id]
         try {
-          answers = batchable ? await triageBatch(appRoot, model, batch, signal) : new Map()
+          row.snippet = await sourceSnippet(projectRoot, row)
+          batch.push({ id, prompt: buildPrompt(row, row.snippet) })
         } catch (error) {
-          for (const { id } of batch) fail(id, error)
-          continue
+          fail(id, error)
         }
+      }
+      if (signal.aborted || !batch.length) return
+
+      // one-row and oversized batches go straight to single calls; the prompt is one argv entry
+      const batchable = batch.length > 1 && Buffer.byteLength(batch.map(({ prompt }) => prompt).join('')) < 100_000
+      let answers
+      try {
+        answers = batchable ? await triageBatch(appRoot, model, batch, signal, onUsage) : new Map()
+      } catch (error) {
+        for (const { id } of batch) fail(id, error)
+        return
+      }
+      if (signal.aborted) return
+      for (const [id, answer] of answers) updateRow(id, { status: 'done', answer })
+      for (const { id, prompt } of batch) {
         if (signal.aborted) return
-        for (const [id, answer] of answers) updateRow(id, { status: 'done', answer })
-        for (const { id, prompt } of batch) {
-          if (signal.aborted) return
-          if (answers.has(id)) continue
-          try {
-            const answer = await triage(appRoot, model, prompt, signal)
-            if (!signal.aborted) updateRow(id, { status: 'done', answer })
-          } catch (error) {
-            fail(id, error)
-          }
+        if (answers.has(id)) continue
+        try {
+          const answer = await triage(appRoot, model, prompt, signal, onUsage)
+          if (!signal.aborted) updateRow(id, { status: 'done', answer })
+        } catch (error) {
+          fail(id, error)
         }
       }
     }
+    const worker = async () => {
+      while (!signal.aborted && next < runRows.length) await runBatch()
+    }
 
+    // probe batches until one reaches the model; their usage drives the estimate the user confirms
+    let sent: Row[] = []
+    while (!signal.aborted && next < runRows.length && !sent.length) {
+      await runBatch()
+      sent = runRows.slice(0, next).filter(row => row.snippet !== undefined)
+    }
+    if (!signal.aborted && next < runRows.length) {
+      if (sent.every(row => row.status === 'error')) controller.abort()
+      else if (!(await confirmEstimate(model, sent.length, runRows.length).catch(() => false))) controller.abort()
+    }
     await Promise.all(Array.from({ length: Math.min(concurrency, runRows.length) }, worker))
   } finally {
     if (signal.aborted) {
@@ -164,7 +231,8 @@ ipcMain.handle('save', async (_event, format: string) => {
   if (!filePath) return
 
   if (format === 'json') {
-    await writeFile(filePath, JSON.stringify(rows.map(({ snippet, ...row }) => row), null, 2) + '\n', 'utf8')
+    const exported = { usage, rows: rows.map(({ snippet, ...row }) => row) }
+    await writeFile(filePath, JSON.stringify(exported, null, 2) + '\n', 'utf8')
     return
   }
 

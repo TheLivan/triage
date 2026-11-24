@@ -13,6 +13,7 @@ const start = document.querySelector<HTMLButtonElement>('#start')!
 const stopButton = document.querySelector<HTMLButtonElement>('#stop')!
 const progress = document.querySelector<HTMLProgressElement>('#progress')!
 const count = document.querySelector('#count')!
+const usageOutput = document.querySelector('#usage')!
 const error = document.querySelector('#error')!
 const filter = document.querySelector<HTMLSelectElement>('#filter')!
 const table = document.querySelector<HTMLTableSectionElement>('tbody')!
@@ -155,6 +156,10 @@ table.onclick = event => {
 }
 
 api.onUpdate(update => {
+  if ('usage' in update) {
+    usageOutput.textContent = update.usage
+    return
+  }
   if ('rows' in update) {
     rows = update.rows
     expanded = -1
