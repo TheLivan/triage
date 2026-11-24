@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { RunUpdate } from './preload.ts'
-import { buildPrompt, parseReport, runOpenCode, sourceSnippet, triage, type Row } from './triage.ts'
+import { buildPrompt, parseReport, runOpenCode, sourceSnippet, triage, triageBatch, type BatchItem, type Row } from './triage.ts'
 
 const appRoot = app.getAppPath()
 let window: BrowserWindow
@@ -34,7 +34,20 @@ ipcMain.handle('open-root', async () => {
 
 ipcMain.handle('models', async () => {
   const output = await runOpenCode(appRoot, ['models'])
-  models = [...new Set(output.split(/\r?\n/).map(line => line.trim()).filter(line => /^[^/\s]+\/[^\s]+$/.test(line)))]
+  const base = [...new Set(output.split(/\r?\n/).map(line => line.trim()).filter(line => /^[^/\s]+\/[^\s]+$/.test(line)))]
+  const low = new Set<string>()
+  try {
+    const metadata = await runOpenCode(appRoot, ['api', 'model.list'])
+    const { data } = JSON.parse(metadata) as {
+      data: { providerID: string; id: string; variants: { id: string }[] }[]
+    }
+    for (const { providerID, id, variants } of data) {
+      if (variants?.some(variant => variant.id === 'low')) low.add(`${providerID}/${id}`)
+    }
+  } catch {
+    // Older OpenCode versions may only support the plain model list.
+  }
+  models = base.flatMap(id => low.has(id) ? [id, id + '#low'] : [id])
   return models
 })
 
@@ -52,7 +65,21 @@ ipcMain.handle('start', async (_event, model: string, concurrency: number, maxLe
   run = controller
 
   const send = (update: RunUpdate) => {
-    if (!window.isDestroyed()) window.webContents.send('update', update)
+    try {
+      if (!window.isDestroyed()) window.webContents.send('update', update)
+    } catch {
+      // the window can be destroyed between the check and the send on quit
+    }
+  }
+  let runRows: Row[] = []
+  const updateRow = (index: number, update: Partial<Row>) => {
+    const row = Object.assign(runRows[index], update)
+    send({ index, row })
+  }
+  const fail = (index: number, error: unknown) => {
+    if (!signal.aborted) {
+      updateRow(index, { status: 'error', error: error instanceof Error ? error.message : String(error) })
+    }
   }
 
   try {
@@ -61,33 +88,59 @@ ipcMain.handle('start', async (_event, model: string, concurrency: number, maxLe
     rows = parseReport(await readFile(report, 'utf8'))
       .filter(warning => warning.level <= maxLevel)
       .map(warning => ({ ...warning, status: 'pending' }))
+    runRows = rows
     send({ rows })
 
     let next = 0
     const worker = async () => {
-      while (!signal.aborted && next < rows.length) {
-        const index = next++
-        const row = rows[index]
-        row.status = 'running'
-        send({ index, row })
-        try {
-          row.snippet = await sourceSnippet(projectRoot, row)
-          row.answer = await triage(appRoot, model, buildPrompt(row, row.snippet), signal)
-          row.status = 'done'
-        } catch (error) {
-          if (signal.aborted) {
-            row.status = 'stopped'
-          } else {
-            row.status = 'error'
-            row.error = error instanceof Error ? error.message : String(error)
+      while (!signal.aborted && next < runRows.length) {
+        const end = Math.min(next + 5, runRows.length)
+        const start = next
+        next = end
+        const batch: BatchItem[] = []
+        for (let id = start; id < end; id++) updateRow(id, { status: 'running' })
+        for (let id = start; id < end && !signal.aborted; id++) {
+          const row = runRows[id]
+          try {
+            row.snippet = await sourceSnippet(projectRoot, row)
+            batch.push({ id, prompt: buildPrompt(row, row.snippet) })
+          } catch (error) {
+            fail(id, error)
           }
         }
-        send({ index, row })
+        if (signal.aborted || !batch.length) continue
+
+        // one-row and oversized batches go straight to single calls; the prompt is one argv entry
+        const batchable = batch.length > 1 && Buffer.byteLength(batch.map(({ prompt }) => prompt).join('')) < 100_000
+        let answers
+        try {
+          answers = batchable ? await triageBatch(appRoot, model, batch, signal) : new Map()
+        } catch (error) {
+          for (const { id } of batch) fail(id, error)
+          continue
+        }
+        if (signal.aborted) return
+        for (const [id, answer] of answers) updateRow(id, { status: 'done', answer })
+        for (const { id, prompt } of batch) {
+          if (signal.aborted) return
+          if (answers.has(id)) continue
+          try {
+            const answer = await triage(appRoot, model, prompt, signal)
+            if (!signal.aborted) updateRow(id, { status: 'done', answer })
+          } catch (error) {
+            fail(id, error)
+          }
+        }
       }
     }
 
-    await Promise.all(Array.from({ length: Math.min(concurrency, rows.length) }, worker))
+    await Promise.all(Array.from({ length: Math.min(concurrency, runRows.length) }, worker))
   } finally {
+    if (signal.aborted) {
+      runRows.forEach((row, index) => {
+        if (row.status === 'pending' || row.status === 'running') updateRow(index, { status: 'stopped' })
+      })
+    }
     run = undefined
   }
 })

@@ -80,23 +80,33 @@ export async function sourceSnippet(root: string, warning: Warning): Promise<str
 export function buildPrompt(warning: Warning, snippet: string): string {
   return [
     `Warning: ${warning.code} (level ${warning.level})`,
-    `Message: ${warning.message}`,
+    `Message: ${warning.message.slice(0, 1000)}`,
     `File: ${warning.file}:${warning.line}`,
     '',
     snippet,
   ].join('\n')
 }
 
-export function parseAnswer(text: string): Answer {
+export type BatchItem = { id: number; prompt: string }
+
+export function buildBatchPrompt(batch: readonly BatchItem[]): string {
+  return [
+    'Triage each warning independently. Reply ONLY with a JSON array: [{"id": <n>, "verdict": ..., "confidence": ..., "reason": ...}, ...]. Use the id from each section.',
+    ...batch.map(({ id, prompt }) => `### id=${id}\n${prompt}`),
+  ].join('\n\n')
+}
+
+function parseAnswerJson(text: string): unknown {
   const trimmed = text.trim()
   const fenced = /^\x60\x60\x60(?:json)?\s*([\s\S]*?)\s*\x60\x60\x60$/i.exec(trimmed)
-  let value: unknown
   try {
-    value = JSON.parse(fenced ? fenced[1] : trimmed)
+    return JSON.parse(fenced ? fenced[1] : trimmed)
   } catch {
     throw new Error('OpenCode answer is not valid JSON.')
   }
+}
 
+function validateAnswer(value: unknown): Answer {
   const { verdict, confidence, reason } = object(value)
   const validVerdict = verdicts.find(option => option === verdict)
   if (!validVerdict) throw new Error('OpenCode returned an invalid verdict.')
@@ -104,6 +114,34 @@ export function parseAnswer(text: string): Answer {
   if (!validConfidence) throw new Error('OpenCode returned an invalid confidence.')
   if (typeof reason !== 'string' || !reason.trim()) throw new Error('OpenCode returned an empty or invalid reason.')
   return { verdict: validVerdict, confidence: validConfidence, reason: reason.trim() }
+}
+
+export function parseAnswer(text: string): Answer {
+  return validateAnswer(parseAnswerJson(text))
+}
+
+export function parseBatchAnswer(text: string, ids: readonly number[]): Map<number, Answer> {
+  const answers = new Map<number, Answer>()
+  let items: unknown
+  try {
+    items = parseAnswerJson(text)
+  } catch {
+    return answers
+  }
+  if (!Array.isArray(items)) return answers
+
+  const seen = new Set<unknown>()
+  for (const item of items) {
+    const { id } = object(item)
+    if (typeof id !== 'number' || !Number.isInteger(id) || !ids.includes(id) || seen.has(id)) continue
+    seen.add(id)
+    try {
+      answers.set(id, validateAnswer(item))
+    } catch {
+      // Leave invalid rows for the single-warning path.
+    }
+  }
+  return answers
 }
 
 const exec = promisify(execFile)
@@ -128,38 +166,54 @@ export function eventError(stdout: string): string | undefined {
   }
 }
 
-export async function runOpenCode(cwd: string, args: string[], signal?: AbortSignal): Promise<string> {
+export async function runOpenCode(cwd: string, args: string[], signal?: AbortSignal, timeout = 60_000): Promise<string> {
   try {
     // opencode resolves its project config from PWD, not the process cwd
     const { stdout } = await exec('opencode', args, {
-      cwd, env: { ...process.env, PWD: cwd }, signal, timeout: 60_000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024,
+      cwd, env: { ...process.env, PWD: cwd }, signal, timeout, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024,
     })
     return stdout
   } catch (error) {
     const { code, killed, stdout, stderr } = error as NodeJS.ErrnoException & { killed?: boolean; stdout?: string; stderr?: string }
     if (signal?.aborted) throw error
     if (code === 'ENOENT') throw new Error('OpenCode was not found on PATH.')
-    if (killed && !code) throw Object.assign(new Error('OpenCode timed out after 1 minute.'), { name: 'TimeoutError' })
-    throw new Error(eventError(stdout ?? '') || stderr?.trim().slice(0, 500) || `OpenCode failed (${code ?? 'process terminated'}).`)
+    if (killed && !code) throw Object.assign(new Error(`OpenCode timed out after ${timeout / 1000} seconds.`), { name: 'TimeoutError' })
+    const reported = eventError(stdout ?? '')
+    if (reported) throw new Error(reported)
+    throw new Error(stderr?.trim().slice(0, 500) || `OpenCode failed (${code ?? 'process terminated'}).`)
   }
 }
 
-export async function triage(cwd: string, model: string, prompt: string, signal: AbortSignal): Promise<Answer> {
+async function requestAnswer(cwd: string, model: string, prompt: string, signal: AbortSignal, timeout?: number): Promise<string> {
+  signal.throwIfAborted()
   const args = ['run', '--archived', '--format', 'json', '--agent', 'triage', '-m', model, prompt]
-  const text = async () => {
-    signal.throwIfAborted()
-    const stdout = await runOpenCode(cwd, args, signal)
-    const error = eventError(stdout)
-    if (error) throw new Error(error)
-    return events(stdout).map(event => event.type === 'text' ? object(event.part).text : undefined)
-      .filter(part => typeof part === 'string').join('')
-  }
+  const stdout = await runOpenCode(cwd, args, signal, timeout)
+  const error = eventError(stdout)
+  if (error) throw new Error(error)
+  return events(stdout).map(event => event.type === 'text' ? object(event.part).text : undefined)
+    .filter(part => typeof part === 'string').join('')
+}
 
+export async function triageBatch(cwd: string, model: string, batch: readonly BatchItem[], signal: AbortSignal): Promise<Map<number, Answer>> {
+  // local ids 1..n: a model that renumbers its answers cannot hit another row
+  const local = batch.map(({ prompt }, index) => ({ id: index + 1, prompt }))
+  let answer: string
+  try {
+    answer = await requestAnswer(cwd, model, buildBatchPrompt(local), signal, 60_000 + 20_000 * (batch.length - 1))
+  } catch (error) {
+    if (error instanceof Error && error.name === 'TimeoutError') return new Map()
+    throw error
+  }
+  const answers = parseBatchAnswer(answer, local.map(({ id }) => id))
+  return new Map([...answers].map(([id, value]) => [batch[id - 1].id, value]))
+}
+
+export async function triage(cwd: string, model: string, prompt: string, signal: AbortSignal): Promise<Answer> {
   // retry a stalled provider stream or a malformed answer once; other failures are deterministic
   for (let attempt = 1; ; attempt++) {
     let answer: string
     try {
-      answer = await text()
+      answer = await requestAnswer(cwd, model, prompt, signal)
     } catch (error) {
       if (attempt < 2 && error instanceof Error && error.name === 'TimeoutError') continue
       throw error
