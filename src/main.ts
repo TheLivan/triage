@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { RunUpdate } from './preload.ts'
 import {
   addUsage, buildPrompt, goLimits, noUsage, parseReport, runOpenCode, sourceSnippet, triage, triageBatch, usageCost,
@@ -62,8 +62,8 @@ ipcMain.handle('open-report', async () => {
   const { filePaths } = await dialog.showOpenDialog(window, {
     properties: ['openFile'], filters: [{ name: 'JSON report', extensions: ['json'] }],
   })
-  if (filePaths.length) { report = filePaths[0]; clear() }
-  return report
+  if (filePaths.length) { report = filePaths[0]; root ||= dirname(report); clear() }
+  return { report, root }
 })
 
 ipcMain.handle('open-root', async () => {

@@ -4,7 +4,7 @@ import type { Row } from './triage.ts'
 export type RunUpdate = { rows: Row[] } | { index: number; row: Row } | { usage: string }
 
 export type TriageApi = {
-  openReport: () => Promise<string | undefined>
+  openReport: () => Promise<{ report?: string; root?: string }>
   openRoot: () => Promise<string | undefined>
   models: () => Promise<string[]>
   start: (model: string, concurrency: number, maxLevel: number) => Promise<void>
