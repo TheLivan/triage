@@ -113,7 +113,7 @@ function paint() {
     const cell = body.appendChild(document.createElement('tr')).insertCell()
     cell.colSpan = columns.length
     cell.className = 'empty'
-    cell.textContent = verdictFilter ? 'No rows match this verdict.' : 'No warnings to display.'
+    cell.textContent = verdictFilter ? 'No rows match this verdict.' : reportPath.textContent ? 'No warnings to display.' : 'Open a report to start.'
   }
 
   table.replaceChildren(body)
@@ -133,6 +133,11 @@ async function action(run: () => Promise<void>) {
   }
 }
 
+function showPath(element: Element, path = '') {
+  element.textContent = path.split(/[\\/]/).filter(Boolean).pop() ?? ''
+  element.setAttribute('title', path)
+}
+
 async function choose(run: () => Promise<void>) {
   dialogOpen = true
   controls()
@@ -146,10 +151,10 @@ async function choose(run: () => Promise<void>) {
 
 openReport.onclick = () => choose(async () => {
   const chosen = await api.openReport()
-  reportPath.textContent = chosen.report ?? ''
-  rootPath.textContent = chosen.root ?? ''
+  showPath(reportPath, chosen.report)
+  showPath(rootPath, chosen.root)
 })
-openRoot.onclick = () => choose(async () => { rootPath.textContent = await api.openRoot() ?? '' })
+openRoot.onclick = () => choose(async () => showPath(rootPath, await api.openRoot()))
 for (const button of exportsButtons) {
   button.onclick = () => choose(() => api.save(button.dataset.export === 'csv' ? 'csv' : 'json'))
 }
