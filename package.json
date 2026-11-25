@@ -1,5 +1,6 @@
 {
   "name": "triage-report",
+  "productName": "Triage Report",
   "version": "0.1.0",
   "private": true,
   "main": "build/main.js",

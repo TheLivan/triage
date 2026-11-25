@@ -244,9 +244,12 @@ ipcMain.handle('save', async (_event, format: string) => {
 })
 
 app.whenReady().then(async () => {
+  const icon = join(appRoot, 'icon.png')
+  app.dock?.setIcon(icon)
   window = new BrowserWindow({
     width: 1250,
     height: 790,
+    icon,
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
