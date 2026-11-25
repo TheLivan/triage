@@ -19,7 +19,9 @@
     .settings, .meter { margin-top: 14px; }
     .settings label { display: grid; gap: 4px; }
     .toolbar { margin: 16px 0 8px; align-items: center; }
-    .toolbar > label { margin-right: auto; }
+    #filter { display: flex; flex-wrap: wrap; gap: 6px; margin-right: auto; }
+    #filter button { font-variant-numeric: tabular-nums; }
+    #filter button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
     button, input, select { font: inherit; color: inherit; }
     button, input, select { border: 1px solid var(--control); border-radius: 6px; background: var(--panel); min-height: 32px; padding: 5px 9px; }
     button { cursor: pointer; }
@@ -50,7 +52,9 @@
     .file { color: var(--link); overflow-wrap: anywhere; }
     .file:hover { text-decoration: underline; }
     .empty, .detail { background: var(--subtle); color: var(--muted); }
-    .detail pre { margin: 3px 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+    .detail pre { margin: 3px 0; overflow-x: auto; font-size: 13px; }
+    .detail pre span { display: block; }
+    .detail pre .target { background: var(--unsure-bg); color: var(--fg); }
     .badge { display: inline-block; padding: 2px 7px; border-radius: 4px; background: var(--badge); white-space: nowrap; }
     .bug, .error { background: var(--bug-bg); color: var(--bug); }
     .false_positive { background: var(--fp-bg); color: var(--fp); }
@@ -81,10 +85,14 @@
     <p id="error" role="alert"></p>
   </section>
   <div class="toolbar">
-    <label>Verdict <select id="filter">
-      <option value="">All verdicts</option>
-      <option>bug</option><option>false_positive</option><option>wont_fix</option><option>unsure</option>
-    </select></label>
+    <div id="filter" role="group" aria-label="Filter by verdict">
+      <button data-verdict="" aria-pressed="true"></button>
+      <button data-verdict="bug" class="bug" aria-pressed="false"></button>
+      <button data-verdict="false_positive" class="false_positive" aria-pressed="false"></button>
+      <button data-verdict="wont_fix" class="wont_fix" aria-pressed="false"></button>
+      <button data-verdict="unsure" class="unsure" aria-pressed="false"></button>
+      <button data-verdict="error" class="error" aria-pressed="false"></button>
+    </div>
     <button data-export="csv" disabled>Export CSV</button>
     <button data-export="json" disabled>Export JSON</button>
   </div>

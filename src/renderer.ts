@@ -15,7 +15,7 @@ const progress = document.querySelector<HTMLProgressElement>('#progress')!
 const count = document.querySelector('#count')!
 const usageOutput = document.querySelector('#usage')!
 const error = document.querySelector('#error')!
-const filter = document.querySelector<HTMLSelectElement>('#filter')!
+const chips = Array.from(document.querySelectorAll<HTMLButtonElement>('#filter button'))
 const table = document.querySelector<HTMLTableSectionElement>('tbody')!
 const headers = Array.from(document.querySelectorAll<HTMLTableCellElement>('thead th'))
 const exportsButtons = document.querySelectorAll<HTMLButtonElement>('[data-export]')
@@ -27,6 +27,7 @@ let expanded = -1
 let sortColumn = -1
 let direction = 1
 let frame = 0
+let verdictFilter = ''
 
 const locationText = (row: TriageRow) => `${row.file}:${row.line}`
 const verdictText = (row: TriageRow) => row.answer?.verdict ?? row.status
@@ -55,8 +56,15 @@ function paint() {
   progress.value = done
   controls()
 
+  for (const chip of chips) {
+    const verdict = chip.dataset.verdict!
+    const total = verdict ? rows.filter(row => verdictText(row) === verdict).length : rows.length
+    chip.textContent = `${verdict || 'all'} ${total}`
+    chip.setAttribute('aria-pressed', String(verdict === verdictFilter))
+  }
+
   const selected = rows.map((row, index) => ({ row, index }))
-    .filter(({ row }) => !filter.value || row.answer?.verdict === filter.value)
+    .filter(({ row }) => !verdictFilter || verdictText(row) === verdictFilter)
   const sortValue = columns[sortColumn]
   if (sortValue) selected.sort((a, b) => {
     const left = sortValue(a.row)
@@ -77,7 +85,8 @@ function paint() {
 
     const button = tr.insertCell().appendChild(document.createElement('button'))
     button.className = 'file'
-    button.textContent = locationText(row)
+    button.textContent = `${row.file.split(/[\\/]/).pop()}:${row.line}`
+    button.title = locationText(row)
     button.setAttribute('aria-expanded', String(expanded === index))
     tr.insertCell().textContent = row.message
 
@@ -91,7 +100,12 @@ function paint() {
       const detail = body.appendChild(document.createElement('tr')).insertCell()
       detail.className = 'detail'
       detail.colSpan = columns.length
-      detail.appendChild(document.createElement('pre')).textContent = row.snippet ?? 'Source snippet unavailable.'
+      const pre = detail.appendChild(document.createElement('pre'))
+      for (const line of (row.snippet ?? 'Source snippet unavailable.').split('\n')) {
+        const span = pre.appendChild(document.createElement('span'))
+        span.textContent = line
+        if (line.startsWith('>>')) span.className = 'target'
+      }
     }
   }
 
@@ -99,7 +113,7 @@ function paint() {
     const cell = body.appendChild(document.createElement('tr')).insertCell()
     cell.colSpan = columns.length
     cell.className = 'empty'
-    cell.textContent = filter.value ? 'No rows match this verdict.' : 'No warnings to display.'
+    cell.textContent = verdictFilter ? 'No rows match this verdict.' : 'No warnings to display.'
   }
 
   table.replaceChildren(body)
@@ -130,14 +144,23 @@ async function choose(run: () => Promise<void>) {
   }
 }
 
-openReport.onclick = () => choose(async () => { reportPath.textContent = await api.openReport() ?? '' })
+openReport.onclick = () => choose(async () => {
+  const chosen = await api.openReport()
+  reportPath.textContent = chosen.report ?? ''
+  rootPath.textContent = chosen.root ?? ''
+})
 openRoot.onclick = () => choose(async () => { rootPath.textContent = await api.openRoot() ?? '' })
 for (const button of exportsButtons) {
   button.onclick = () => choose(() => api.save(button.dataset.export === 'csv' ? 'csv' : 'json'))
 }
 
 model.onchange = () => { localStorage.setItem('model', model.value) }
-filter.onchange = schedulePaint
+for (const chip of chips) {
+  chip.onclick = () => {
+    verdictFilter = chip.dataset.verdict!
+    schedulePaint()
+  }
+}
 headers.forEach((header, index) => {
   header.querySelector('button')!.onclick = () => {
     direction = sortColumn === index ? -direction : 1
