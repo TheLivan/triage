@@ -72,7 +72,7 @@ export async function sourceSnippet(root: string, warning: Warning): Promise<str
   const end = Math.min(lines.length, warning.line + 30)
   return lines.slice(start, end).map((line, index) => {
     const number = start + index + 1
-    // minified lines would blow the argv limit
+    // minified lines would flood the prompt
     return `${number === warning.line ? '>>' : '  '} ${number} | ${line.slice(0, 300)}`
   }).join('\n')
 }
@@ -200,19 +200,26 @@ export function eventError(stdout: string): string | undefined {
   }
 }
 
-export async function runOpenCode(cwd: string, args: string[], signal?: AbortSignal, timeout = 60_000): Promise<string> {
+export async function runOpenCode(cwd: string, args: string[], signal?: AbortSignal, timeout = 60_000, input = ''): Promise<string> {
   try {
     // opencode resolves its project config from PWD, not the process cwd
-    const { stdout } = await exec('opencode', args, {
+    const running = exec('opencode', args, {
       cwd, env: { ...process.env, PWD: cwd }, signal, timeout, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024,
     })
+    // the prompt goes through stdin: Windows caps a command line at 32K characters
+    running.child.stdin?.on('error', () => {}).end(input)
+    const { stdout } = await running
     return stdout
   } catch (error) {
     const { code, killed, stdout, stderr } = error as NodeJS.ErrnoException & { killed?: boolean; stdout?: string; stderr?: string }
     if (signal?.aborted) throw error
     // failed calls keep their stdout: the tokens they streamed were billed
     const fail = (message: string, name = 'Error') => Object.assign(new Error(message), { name, stdout: stdout ?? '' })
-    if (code === 'ENOENT') throw fail('OpenCode was not found on PATH.')
+    if (code === 'ENOENT') {
+      throw fail(process.platform === 'win32'
+        ? 'opencode.exe was not found on PATH. Install the native OpenCode binary; the npm opencode.cmd shim cannot run without a shell.'
+        : 'OpenCode was not found on PATH.')
+    }
     if (killed && !code) throw fail(`OpenCode timed out after ${timeout / 1000} seconds.`, 'TimeoutError')
     const reported = eventError(stdout ?? '')
     if (reported) throw fail(reported)
@@ -224,10 +231,10 @@ type OnUsage = (usage: Usage) => void
 
 async function requestAnswer(cwd: string, model: string, prompt: string, signal: AbortSignal, onUsage: OnUsage, timeout?: number): Promise<string> {
   signal.throwIfAborted()
-  const args = ['run', '--archived', '--format', 'json', '--agent', 'triage', '-m', model, prompt]
+  const args = ['run', '--archived', '--format', 'json', '--agent', 'triage', '-m', model]
   let stdout: string
   try {
-    stdout = await runOpenCode(cwd, args, signal, timeout)
+    stdout = await runOpenCode(cwd, args, signal, timeout, prompt)
   } catch (error) {
     onUsage(usageOf((error as { stdout?: string }).stdout ?? ''))
     throw error

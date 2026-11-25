@@ -75,7 +75,6 @@ ipcMain.handle('open-root', async () => {
 ipcMain.handle('models', async () => {
   const output = await runOpenCode(appRoot, ['models'])
   const base = [...new Set(output.split(/\r?\n/).map(line => line.trim()).filter(line => /^[^/\s]+\/[^\s]+$/.test(line)))]
-  // fast variants: 'none' skips reasoning, 'low' keeps a little
   const variants = new Map<string, string[]>()
   try {
     const metadata = await runOpenCode(appRoot, ['api', 'model.list'])
@@ -167,7 +166,7 @@ ipcMain.handle('start', async (_event, model: string, concurrency: number, maxLe
       }
       if (signal.aborted || !batch.length) return
 
-      // one-row and oversized batches go straight to single calls; the prompt is one argv entry
+      // one-row and oversized batches go straight to single calls
       const batchable = batch.length > 1 && Buffer.byteLength(batch.map(({ prompt }) => prompt).join('')) < 100_000
       let answers
       try {
