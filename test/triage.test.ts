@@ -3,7 +3,9 @@ import { copyFile, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { addUsage, buildBatchPrompt, buildPrompt, eventError, noUsage, usageCost, usageOf, parseAnswer, parseBatchAnswer, parseReport, parseResults, csvHeader, sourcePath, sourceSnippet, triage } from '../src/triage.ts'
+import { addUsage, buildBatchPrompt, buildPrompt, loadDiagnostics, eventError, noUsage, usageCost, usageOf, parseAnswer, parseBatchAnswer, parseReport, parseResults, csvHeader, sourcePath, sourceSnippet, triage } from '../src/triage.ts'
+
+const diagnostics = loadDiagnostics(join(import.meta.dirname, '..'))
 
 test('parses every valid position and skips warnings without one', () => {
   const warning = { code: 'V501', level: 1, message: 'Duplicate operands' }
@@ -45,17 +47,35 @@ test('builds a batch prompt with the original prompt in each id section', () => 
     code: 'V501', level: 1, message: 'Test', file: 'main.cpp', line: 33,
     positions: [{ file: 'main.cpp', line: 33 }],
   }
-  const first = buildPrompt(warning, '>> 33 | first')
-  const second = buildPrompt({ ...warning, line: 42 }, '>> 42 | second')
+  const first = buildPrompt(warning, '>> 33 | first', diagnostics)
+  const second = buildPrompt({ ...warning, code: ' v522 ', line: 42 }, '>> 42 | second', diagnostics)
   const [instruction, ...sections] = buildBatchPrompt([
     { id: 3, prompt: first }, { id: 7, prompt: second },
   ]).split('\n\n### ')
 
   assert.match(instruction, /independently.*ONLY with a JSON array/)
   assert.deepEqual(sections, [`id=3\n${first}`, `id=7\n${second}`])
+  assert.match(sections[0], /PVS-Studio diagnostic: Identical expressions/)
+  assert.match(sections[1], /PVS-Studio diagnostic: A reachable path may dereference a null pointer/)
+  assert.match(second, /^Possible false-positive patterns .*callee contract/m)
+  assert.equal(buildPrompt({ ...warning, code: 'V99999' }, '>> 33 | first', diagnostics),
+    'Warning: V99999 (level 1)\nMessage: Test\nFile: main.cpp:33\n\n>> 33 | first')
 })
 
 const batchAnswer = { verdict: 'bug', confidence: 'high', reason: 'The operands are identical.' }
+
+test('includes rule-specific evidence for redundant assignments and expressions', () => {
+  const warning = { code: 'V1048', level: 2, message: 'Test', file: 'main.cpp', line: 1, positions: [] }
+  assert.match(buildPrompt(warning, '>> 1 | if (x == 0) x = 0;', diagnostics), /volatile write/)
+  assert.match(buildPrompt({ ...warning, code: 'V1065' }, '>> 1 | return x - x + y;', diagnostics), /redundancy is real.*use unsure/)
+})
+
+test('includes Java reference identity evidence in a V6013 prompt', () => {
+  const warning = { code: 'V6013', level: 2, message: 'Check comparison', file: 'Token.java', line: 8, positions: [] }
+  const prompt = buildPrompt(warning, '>> 8 | return input == END;', diagnostics)
+  assert.match(prompt, /^PVS-Studio diagnostic: .*reference identity/m)
+  assert.match(prompt, /^Possible false-positive patterns .*both strings are interned/m)
+})
 
 test('parses plain and fenced batch arrays and rejects non-arrays', () => {
   const json = JSON.stringify([{ ...batchAnswer, id: 7 }, { ...batchAnswer, id: 3 }])
@@ -116,7 +136,7 @@ test('guards source paths and builds a marked snippet', async t => {
   assert.equal(lines[0], '   3 | line 3')
   assert.equal(lines[30], '>> 33 | line 33')
   assert.equal(lines[60], '   63 | line 63')
-  assert.match(buildPrompt(warning, snippet), /^Warning: V501 \(level 1\)$/m)
+  assert.match(buildPrompt(warning, snippet, diagnostics), /^Warning: V501 \(level 1\)$/m)
 })
 
 test('adds short snippets for related positions and skips unreadable ones', async t => {

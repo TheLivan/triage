@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
+import { readFileSync } from 'node:fs'
 
 export const verdicts = ['bug', 'false_positive', 'unsure'] as const
 const confidences = ['low', 'medium', 'high'] as const
@@ -157,10 +158,27 @@ export async function sourceSnippet(root: string, warning: Warning): Promise<str
   return parts.join('\n\n')
 }
 
-export function buildPrompt(warning: Warning, snippet: string): string {
+export function loadDiagnostics(appRoot: string): Map<string, string> {
+  const guide = readFileSync(join(appRoot, 'DIAGNOSTICS.md'), 'utf8')
+  const cards = new Map<string, string>()
+  for (const section of guide.split(/^## /m).slice(1)) {
+    const newline = section.indexOf('\n')
+    const code = section.slice(0, newline).trim()
+    const body = section.slice(newline + 1).trim()
+    if (!/^V\d+$/.test(code) || newline < 0 || !body || cards.has(code)) {
+      throw new Error(`Invalid diagnostic card in DIAGNOSTICS.md: ${code}`)
+    }
+    cards.set(code, body)
+  }
+  return cards
+}
+
+export function buildPrompt(warning: Warning, snippet: string, diagnostics: ReadonlyMap<string, string>): string {
+  const diagnostic = diagnostics.get(warning.code.trim().toUpperCase())
   return [
     `Warning: ${warning.code} (level ${warning.level})`,
     `Message: ${warning.message.slice(0, 1000)}`,
+    ...(diagnostic ? [diagnostic] : []),
     `File: ${warning.file}:${warning.line}`,
     '',
     snippet,

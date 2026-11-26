@@ -3,11 +3,12 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import type { RunUpdate } from './preload.ts'
 import {
-  addUsage, buildPrompt, csvHeader, parseResults, goLimits, noUsage, parseReport, runOpenCode, sourceSnippet, triage, triageBatch, usageCost,
+  addUsage, buildPrompt, loadDiagnostics, csvHeader, parseResults, goLimits, noUsage, parseReport, runOpenCode, sourceSnippet, triage, triageBatch, usageCost,
   type BatchItem, type Price, type Row, type Usage,
 } from './triage.ts'
 
 const appRoot = app.getAppPath()
+const diagnostics = loadDiagnostics(appRoot)
 let window: BrowserWindow
 let report: string | undefined
 let root: string | undefined
@@ -184,7 +185,7 @@ ipcMain.handle('start', async (_event, model: string, concurrency: number, maxLe
         const row = runRows[id]
         try {
           row.snippet = await sourceSnippet(projectRoot, row)
-          batch.push({ id, prompt: buildPrompt(row, row.snippet) })
+          batch.push({ id, prompt: buildPrompt(row, row.snippet, diagnostics) })
         } catch (error) {
           fail(id, error)
         }
