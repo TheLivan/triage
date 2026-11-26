@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { readFile, realpath, stat } from 'node:fs/promises'
-import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 
 export const verdicts = ['bug', 'false_positive', 'wont_fix', 'unsure'] as const
@@ -53,11 +53,20 @@ function inside(root: string, target: string): boolean {
 export async function sourcePath(root: string, file: string): Promise<string> {
   const requestedRoot = resolve(root)
   const actualRoot = await realpath(requestedRoot)
-  const requestedFile = resolve(requestedRoot, file)
+  const marked = file.startsWith('|?|')
+  const source = marked ? file.slice(3).replace(/^[\\/]+/, '').replace(/[\\/]/g, sep) : file
+  const requestedFile = resolve(requestedRoot, source)
   const outside = () => new Error('Source file is outside the project root.')
   if (!inside(requestedRoot, requestedFile) && !inside(actualRoot, requestedFile)) throw outside()
 
-  const actualFile = await realpath(requestedFile)
+  const actualFile = await realpath(requestedFile).catch((error: NodeJS.ErrnoException) => {
+    if (!marked || error.code !== 'ENOENT' || !inside(requestedRoot, requestedFile)) throw error
+    const [first, ...rest] = relative(requestedRoot, requestedFile).split(sep)
+    const name = basename(requestedRoot)
+    const repeatsRoot = process.platform === 'win32' ? first.toLowerCase() === name.toLowerCase() : first === name
+    if (!repeatsRoot || !rest.length) throw error
+    return realpath(join(requestedRoot, ...rest))
+  })
   if (!inside(actualRoot, actualFile)) throw outside()
   if (!(await stat(actualFile)).isFile()) throw new Error('Source path is not a file.')
   return actualFile
@@ -200,15 +209,32 @@ export function eventError(stdout: string): string | undefined {
   }
 }
 
+async function npmOpenCode(): Promise<string | undefined> {
+  for (const entry of (process.env.PATH ?? '').split(';')) {
+    const dir = entry.replace(/^"(.*)"$/, '$1')
+    if (!isAbsolute(dir)) continue
+    const binary = resolve(dir, 'node_modules', '@opencode', 'cli', 'bin', 'opencode.exe')
+    if ((await stat(binary).catch(() => undefined))?.isFile()) return binary
+  }
+}
+
 export async function runOpenCode(cwd: string, args: string[], signal?: AbortSignal, timeout = 60_000, input = ''): Promise<string> {
-  try {
+  const run = (binary: string) => {
     // opencode resolves its project config from PWD, not the process cwd
-    const running = exec('opencode', args, {
+    const running = exec(binary, args, {
       cwd, env: { ...process.env, PWD: cwd }, signal, timeout, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024,
     })
     // the prompt goes through stdin: Windows caps a command line at 32K characters
     running.child.stdin?.on('error', () => {}).end(input)
-    const { stdout } = await running
+    return running
+  }
+  try {
+    const { stdout } = await run('opencode').catch(async (error: NodeJS.ErrnoException) => {
+      if (process.platform !== 'win32' || error.code !== 'ENOENT' || signal?.aborted) throw error
+      const binary = await npmOpenCode()
+      if (!binary) throw error
+      return run(binary)
+    })
     return stdout
   } catch (error) {
     const { code, killed, stdout, stderr } = error as NodeJS.ErrnoException & { killed?: boolean; stdout?: string; stderr?: string }
@@ -217,7 +243,7 @@ export async function runOpenCode(cwd: string, args: string[], signal?: AbortSig
     const fail = (message: string, name = 'Error') => Object.assign(new Error(message), { name, stdout: stdout ?? '' })
     if (code === 'ENOENT') {
       throw fail(process.platform === 'win32'
-        ? 'opencode.exe was not found on PATH. Install the native OpenCode binary; the npm opencode.cmd shim cannot run without a shell.'
+        ? 'OpenCode was not found. Add opencode.exe to PATH or install @opencode/cli globally and add the npm global directory to PATH.'
         : 'OpenCode was not found on PATH.')
     }
     if (killed && !code) throw fail(`OpenCode timed out after ${timeout / 1000} seconds.`, 'TimeoutError')

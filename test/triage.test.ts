@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -74,17 +74,24 @@ test('guards source paths and builds a marked snippet', async t => {
   t.after(() => rm(temp, { recursive: true, force: true }))
   const root = join(temp, 'project')
   const file = join(root, 'main.cpp')
-  const outside = join(temp, 'private.cpp')
+  const outsideDir = join(temp, 'outside')
+  const outside = join(outsideDir, 'private.cpp')
   await mkdir(root)
+  await mkdir(outsideDir)
   await writeFile(file, Array.from({ length: 65 }, (_, i) => `line ${i + 1}`).join('\n'))
   await writeFile(outside, 'outside')
-  await symlink(outside, join(root, 'link.cpp'))
+  await symlink(outsideDir, join(root, 'linked'), 'junction')
 
   assert.equal(await sourcePath(root, 'main.cpp'), await realpath(file))
   assert.equal(await sourcePath(root, file), await realpath(file))
-  await assert.rejects(sourcePath(root, '../private.cpp'), /outside the project root/)
+  assert.equal(await sourcePath(root, '|?|main.cpp'), await realpath(file))
+  assert.equal(await sourcePath(root, '|?|\\project\\main.cpp'), await realpath(file))
+  assert.equal(await sourcePath(temp, '|?|/project/main.cpp'), await realpath(file))
+  await assert.rejects(sourcePath(root, '|?|\\..\\outside\\private.cpp'), /outside the project root/)
+  await assert.rejects(sourcePath(root, '|?|/project/linked/private.cpp'), /outside the project root/)
+  await assert.rejects(sourcePath(root, '../outside/private.cpp'), /outside the project root/)
   await assert.rejects(sourcePath(root, outside), /outside the project root/)
-  await assert.rejects(sourcePath(root, 'link.cpp'), /outside the project root/)
+  await assert.rejects(sourcePath(root, 'linked/private.cpp'), /outside the project root/)
 
   const warning = { code: 'V501', level: 1, message: 'Test', file: 'main.cpp', line: 33 }
   const snippet = await sourceSnippet(root, warning)
@@ -117,10 +124,24 @@ test('counts usage of a failed opencode call', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'triage-bin-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
   const step = JSON.stringify({ type: 'step_finish', part: { tokens: { input: 700, output: 30, reasoning: 20, cache: { read: 0, write: 0 } } } })
-  await writeFile(join(dir, 'opencode'), `#!/bin/sh\necho '${step}'\nexit 3\n`, { mode: 0o755 })
-  const path = process.env.PATH
-  process.env.PATH = `${dir}:${path}`
-  t.after(() => { process.env.PATH = path })
+  const { PATH, NODE_OPTIONS } = process.env
+  t.after(() => {
+    if (PATH === undefined) delete process.env.PATH
+    else process.env.PATH = PATH
+    if (NODE_OPTIONS === undefined) delete process.env.NODE_OPTIONS
+    else process.env.NODE_OPTIONS = NODE_OPTIONS
+  })
+  process.env.PATH = dir
+  if (process.platform === 'win32') {
+    const bin = join(dir, 'node_modules', '@opencode', 'cli', 'bin')
+    await mkdir(bin, { recursive: true })
+    await copyFile(process.execPath, join(bin, 'opencode.exe'))
+    const preload = join(dir, 'mock.cjs')
+    await writeFile(preload, `process.stdout.write(${JSON.stringify(step)}, () => process.exit(3))`)
+    process.env.NODE_OPTIONS = `--require="${preload.replaceAll('\\', '/')}"`
+  } else {
+    await writeFile(join(dir, 'opencode'), `#!/bin/sh\necho '${step}'\nexit 3\n`, { mode: 0o755 })
+  }
   let usage = noUsage
   await assert.rejects(triage(dir, 'x/y', 'prompt', new AbortController().signal, call => { usage = addUsage(usage, call) }))
   assert.deepEqual(usage, { input: 700, output: 50, cacheRead: 0, cacheWrite: 0 })
