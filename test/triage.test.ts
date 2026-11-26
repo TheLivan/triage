@@ -58,8 +58,20 @@ test('builds a batch prompt with the original prompt in each id section', () => 
   assert.match(sections[0], /PVS-Studio diagnostic: Identical expressions/)
   assert.match(sections[1], /PVS-Studio diagnostic: A reachable path may dereference a null pointer/)
   assert.match(second, /^Possible false-positive patterns .*callee contract/m)
-  assert.equal(buildPrompt({ ...warning, code: 'V99999' }, '>> 33 | first', diagnostics),
-    'Warning: V99999 (level 1)\nMessage: Test\nFile: main.cpp:33\n\n>> 33 | first')
+  assert.equal(buildPrompt({ ...warning, code: 'V99999' }, '>> 33 | first', diagnostics), [
+    'Warning: V99999 (level 1)',
+    'Message: Test',
+    'PVS-Studio diagnostic: No curated card for this code; treat the message above as the analyzer text.',
+    '',
+    'Possible false-positive patterns (verify against the code): Compare the message with the PVS-Studio documentation for this code, then confirm the reported condition can actually occur on every relevant path.',
+    'File: main.cpp:33',
+    '',
+    '>> 33 | first',
+  ].join('\n'))
+})
+
+test('covers every PVS-Studio Java diagnostic code', () => {
+  for (let code = 6001; code <= 6136; code++) assert.ok(diagnostics.has(`V${code}`), `missing card for V${code}`)
 })
 
 const batchAnswer = { verdict: 'bug', confidence: 'high', reason: 'The operands are identical.' }

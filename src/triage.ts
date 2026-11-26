@@ -173,12 +173,18 @@ export function loadDiagnostics(appRoot: string): Map<string, string> {
   return cards
 }
 
+// no curated card exists for every analyzer code; without this the prompt silently loses all triage guidance
+const uncataloguedDiagnostic = [
+  'PVS-Studio diagnostic: No curated card for this code; treat the message above as the analyzer text.',
+  'Possible false-positive patterns (verify against the code): Compare the message with the PVS-Studio documentation for this code, then confirm the reported condition can actually occur on every relevant path.',
+].join('\n\n')
+
 export function buildPrompt(warning: Warning, snippet: string, diagnostics: ReadonlyMap<string, string>): string {
-  const diagnostic = diagnostics.get(warning.code.trim().toUpperCase())
+  const diagnostic = diagnostics.get(warning.code.trim().toUpperCase()) ?? uncataloguedDiagnostic
   return [
     `Warning: ${warning.code} (level ${warning.level})`,
     `Message: ${warning.message.slice(0, 1000)}`,
-    ...(diagnostic ? [diagnostic] : []),
+    diagnostic,
     `File: ${warning.file}:${warning.line}`,
     '',
     snippet,
