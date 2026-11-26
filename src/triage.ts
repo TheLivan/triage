@@ -130,7 +130,6 @@ function linesAround(lines: readonly string[], line: number, radius: number): st
   const end = Math.min(lines.length, line + radius)
   return lines.slice(start, end).map((text, index) => {
     const number = start + index + 1
-    // minified lines would flood the prompt
     return `${number === line ? '>>' : '  '} ${number} | ${text.slice(0, 300)}`
   }).join('\n')
 }
@@ -150,7 +149,6 @@ export async function sourceSnippet(root: string, warning: Warning): Promise<str
   const parts = [linesAround(primary, warning.line, 30)]
   for (const { file, line } of warning.positions) {
     if (file === warning.file && line === warning.line) continue
-    // a missing related file should not hide the primary snippet
     const lines = await read(file).catch(() => undefined)
     parts.push(`Related position: ${file}:${line}` + (lines && line <= lines.length
       ? '\n' + linesAround(lines, line, 3) : ' (source unavailable)'))
@@ -173,7 +171,6 @@ export function loadDiagnostics(appRoot: string): Map<string, string> {
   return cards
 }
 
-// no curated card exists for every analyzer code; without this the prompt silently loses all triage guidance
 const uncataloguedDiagnostic = [
   'PVS-Studio diagnostic: No curated card for this code; treat the message above as the analyzer text.',
   'Possible false-positive patterns (verify against the code): Compare the message with the PVS-Studio documentation for this code, then confirm the reported condition can actually occur on every relevant path.',
@@ -242,7 +239,6 @@ export function parseBatchAnswer(text: string, ids: readonly number[]): Map<numb
     try {
       answers.set(id, validateAnswer(item))
     } catch {
-      // Leave invalid rows for the single-warning path.
     }
   }
   return answers
@@ -250,11 +246,9 @@ export function parseBatchAnswer(text: string, ids: readonly number[]): Map<numb
 
 const exec = promisify(execFile)
 
-// output includes reasoning tokens: providers bill them at the output price
 export type Usage = { input: number; output: number; cacheRead: number; cacheWrite: number }
 export type Price = Usage
 export const noUsage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
-// shortcut: OpenCode Go limits in USD copied from its docs in 2026-11; update if OpenCode changes them
 export const goLimits = { '5h': 12, week: 30, month: 60 }
 
 export function addUsage(a: Usage, b: Usage, scale = 1): Usage {
@@ -294,7 +288,6 @@ function events(stdout: string): Record<string, unknown>[] {
   })
 }
 
-// opencode reports provider failures as JSONL error events on stdout, sometimes with exit code 0
 export function eventError(stdout: string): string | undefined {
   for (const event of events(stdout)) {
     if (event.type !== 'error') continue
@@ -320,11 +313,9 @@ export async function runOpenCode(appRoot: string, args: string[], signal?: Abor
     env.OPENCODE_CONFIG_CONTENT = await readFile(join(appRoot, 'opencode.json'), 'utf8')
   }
   const run = (binary: string) => {
-    // opencode resolves its project config from PWD, not the process cwd
     const running = exec(binary, args, {
       cwd: env.PWD, env, signal, timeout, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024,
     })
-    // the prompt goes through stdin: Windows caps a command line at 32K characters
     running.child.stdin?.on('error', () => {}).end(input)
     return running
   }
@@ -339,7 +330,6 @@ export async function runOpenCode(appRoot: string, args: string[], signal?: Abor
   } catch (error) {
     const { code, killed, stdout, stderr } = error as NodeJS.ErrnoException & { killed?: boolean; stdout?: string; stderr?: string }
     if (signal?.aborted) throw error
-    // failed calls keep their stdout: the tokens they streamed were billed
     const fail = (message: string, name = 'Error') => Object.assign(new Error(message), { name, stdout: stdout ?? '' })
     if (code === 'ENOENT') {
       throw fail(process.platform === 'win32'
@@ -373,7 +363,6 @@ async function requestAnswer(cwd: string, model: string, prompt: string, signal:
 }
 
 export async function triageBatch(cwd: string, model: string, batch: readonly BatchItem[], signal: AbortSignal, onUsage: OnUsage): Promise<Map<number, Answer>> {
-  // local ids 1..n: a model that renumbers its answers cannot hit another row
   const local = batch.map(({ prompt }, index) => ({ id: index + 1, prompt }))
   let answer: string
   try {
@@ -387,7 +376,6 @@ export async function triageBatch(cwd: string, model: string, batch: readonly Ba
 }
 
 export async function triage(cwd: string, model: string, prompt: string, signal: AbortSignal, onUsage: OnUsage): Promise<Answer> {
-  // retry a stalled provider stream or a malformed answer once; other failures are deterministic
   for (let attempt = 1; ; attempt++) {
     let answer: string
     try {

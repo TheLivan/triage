@@ -112,7 +112,6 @@ ipcMain.handle('models', async () => {
     }
     for (const { providerID, id, variants: modelVariants, cost } of data) {
       const [price] = cost ?? []
-      // plan-billed models may list an all-zero price; treat that as unknown, not free
       if (price && (price.input || price.output)) {
         prices.set(`${providerID}/${id}`, {
           input: price.input, output: price.output, cacheRead: price.cache?.read ?? 0, cacheWrite: price.cache?.write ?? 0,
@@ -122,7 +121,6 @@ ipcMain.handle('models', async () => {
       if (fast.length) variants.set(`${providerID}/${id}`, fast)
     }
   } catch {
-    // Older OpenCode versions may only support the plain model list.
   }
   models = base.flatMap(id => [id, ...(variants.get(id) ?? []).map(name => `${id}#${name}`)])
   return models
@@ -132,7 +130,6 @@ ipcMain.handle('start', async (_event, model: string, concurrency: number, maxLe
   if (run) throw new Error('Triage is already running.')
   if (!report || !root) throw new Error('Choose a report and project root.')
   if (!models.includes(model)) throw new Error('Choose an available model.')
-  // measured: OpenAI fast models scale to 16; slow providers stall earlier, so the user tunes it
   if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 16) throw new Error('Concurrency must be from 1 to 16.')
   if (![1, 2, 3].includes(maxLevel)) throw new Error('Choose a maximum warning level from 1 to 3.')
 
@@ -145,7 +142,6 @@ ipcMain.handle('start', async (_event, model: string, concurrency: number, maxLe
     try {
       if (!window.isDestroyed()) window.webContents.send('update', update)
     } catch {
-      // the window can be destroyed between the check and the send on quit
     }
   }
   let runRows: Row[] = []
@@ -192,7 +188,6 @@ ipcMain.handle('start', async (_event, model: string, concurrency: number, maxLe
       }
       if (signal.aborted || !batch.length) return
 
-      // one-row and oversized batches go straight to single calls
       const batchable = batch.length > 1 && Buffer.byteLength(batch.map(({ prompt }) => prompt).join('')) < 100_000
       let answers
       try {
@@ -218,7 +213,6 @@ ipcMain.handle('start', async (_event, model: string, concurrency: number, maxLe
       while (!signal.aborted && next < runRows.length) await runBatch()
     }
 
-    // probe batches until one reaches the model; their usage drives the estimate the user confirms
     let sent: Row[] = []
     while (!signal.aborted && next < runRows.length && !sent.length) {
       await runBatch()
