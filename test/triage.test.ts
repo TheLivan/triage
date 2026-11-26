@@ -34,6 +34,7 @@ test('validates plain and fenced answers', () => {
   assert.deepEqual(parseAnswer(json), answer)
   assert.deepEqual(parseAnswer('\x60\x60\x60json\n' + json + '\n\x60\x60\x60'), answer)
   assert.throws(() => parseAnswer(JSON.stringify({ ...answer, verdict: 'probably' })), /invalid verdict/)
+  assert.throws(() => parseAnswer(JSON.stringify({ ...answer, verdict: 'wont_fix' })), /invalid verdict/)
   assert.throws(() => parseAnswer(JSON.stringify({ ...answer, confidence: 'certain' })), /invalid confidence/)
   assert.throws(() => parseAnswer(JSON.stringify({ ...answer, reason: ' ' })), /reason/)
   assert.throws(() => parseAnswer('garbage'), /not valid JSON/)

@@ -58,7 +58,7 @@
     .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--subtle); white-space: nowrap; }
     .bug, .error { background: var(--bug-bg); color: var(--bug); }
     .false_positive { background: var(--fp-bg); color: var(--fp); }
-    .wont_fix, .running { background: var(--wf-bg); color: var(--wf); }
+    .running { background: var(--wf-bg); color: var(--wf); }
     .unsure { background: var(--unsure-bg); color: var(--unsure); }
   </style>
   <script defer src="build/renderer.js"></script>
@@ -86,7 +86,6 @@
       <button data-verdict="" aria-pressed="true"></button>
       <button data-verdict="bug" class="bug" aria-pressed="false"></button>
       <button data-verdict="false_positive" class="false_positive" aria-pressed="false"></button>
-      <button data-verdict="wont_fix" class="wont_fix" aria-pressed="false"></button>
       <button data-verdict="unsure" class="unsure" aria-pressed="false"></button>
       <button data-verdict="error" class="error" aria-pressed="false"></button>
     </div>

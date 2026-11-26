@@ -3,7 +3,7 @@ import { readFile, realpath, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 
-export const verdicts = ['bug', 'false_positive', 'wont_fix', 'unsure'] as const
+export const verdicts = ['bug', 'false_positive', 'unsure'] as const
 const confidences = ['low', 'medium', 'high'] as const
 
 export type Answer = {
