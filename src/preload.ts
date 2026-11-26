@@ -1,7 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { Row } from './triage.ts'
 
-export type RunUpdate = { rows: Row[] } | { index: number; row: Row } | { usage: string }
+export type RunUpdate =
+  { rows: Row[] } | { index: number; row: Row } | { usage: string }
 
 export type TriageApi = {
   openReport: (saved: boolean) => Promise<string | undefined>
@@ -16,15 +17,18 @@ export type TriageApi = {
 }
 
 contextBridge.exposeInMainWorld('triage', {
-  openReport: saved => ipcRenderer.invoke('open-report', saved),
-  context: index => ipcRenderer.invoke('context', index),
-  onTheme: listener => { ipcRenderer.on('toggle-theme', () => listener()) },
+  openReport: (saved) => ipcRenderer.invoke('open-report', saved),
+  context: (index) => ipcRenderer.invoke('context', index),
+  onTheme: (listener) => {
+    ipcRenderer.on('toggle-theme', () => listener())
+  },
   openRoot: () => ipcRenderer.invoke('open-root'),
   models: () => ipcRenderer.invoke('models'),
-  start: (model, concurrency, maxLevel) => ipcRenderer.invoke('start', model, concurrency, maxLevel),
+  start: (model, concurrency, maxLevel) =>
+    ipcRenderer.invoke('start', model, concurrency, maxLevel),
   stop: () => ipcRenderer.send('stop'),
-  onUpdate: listener => {
+  onUpdate: (listener) => {
     ipcRenderer.on('update', (_event, update: RunUpdate) => listener(update))
   },
-  save: format => ipcRenderer.invoke('save', format),
+  save: (format) => ipcRenderer.invoke('save', format),
 } satisfies TriageApi)

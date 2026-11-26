@@ -29,6 +29,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run typecheck
+      - run: npm run lint
       - run: npx --no tsc
       - run: npx --no install-electron
       - name: Package Electron app
