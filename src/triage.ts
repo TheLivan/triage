@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { readFile, realpath, stat } from 'node:fs/promises'
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 
 export const verdicts = ['bug', 'false_positive', 'wont_fix', 'unsure'] as const
@@ -218,11 +218,16 @@ async function npmOpenCode(): Promise<string | undefined> {
   }
 }
 
-export async function runOpenCode(cwd: string, args: string[], signal?: AbortSignal, timeout = 60_000, input = ''): Promise<string> {
+export async function runOpenCode(appRoot: string, args: string[], signal?: AbortSignal, timeout = 60_000, input = ''): Promise<string> {
+  const env: NodeJS.ProcessEnv & { PWD: string } = { ...process.env, PWD: appRoot }
+  if (basename(appRoot) === 'app.asar') {
+    env.PWD = dirname(appRoot)
+    env.OPENCODE_CONFIG_CONTENT = await readFile(join(appRoot, 'opencode.json'), 'utf8')
+  }
   const run = (binary: string) => {
     // opencode resolves its project config from PWD, not the process cwd
     const running = exec(binary, args, {
-      cwd, env: { ...process.env, PWD: cwd }, signal, timeout, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024,
+      cwd: env.PWD, env, signal, timeout, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024,
     })
     // the prompt goes through stdin: Windows caps a command line at 32K characters
     running.child.stdin?.on('error', () => {}).end(input)
