@@ -5,17 +5,26 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { addUsage, buildBatchPrompt, buildPrompt, eventError, noUsage, usageCost, usageOf, parseAnswer, parseBatchAnswer, parseReport, sourcePath, sourceSnippet, triage } from '../src/triage.ts'
 
-test('parses the first valid position and skips warnings without one', () => {
+test('parses every valid position and skips warnings without one', () => {
   const warning = { code: 'V501', level: 1, message: 'Duplicate operands' }
   assert.deepEqual(parseReport(JSON.stringify({
     warnings: [
-      { ...warning, positions: [{ file: 'bad.cpp', line: 0 }, { file: 'main.cpp', line: 42 }] },
+      {
+        ...warning,
+        positions: [
+          { file: 'bad.cpp', line: 0 }, { file: 'main.cpp', line: 42 },
+          { file: 'main.cpp', line: 42 }, { file: 'other.cpp', line: 7 },
+        ],
+      },
       warning,
       { ...warning, positions: [] },
       { ...warning, positions: [{ file: 'bad.cpp', line: '42' }] },
       null,
     ],
-  })), [{ ...warning, file: 'main.cpp', line: 42 }])
+  })), [{
+    ...warning, file: 'main.cpp', line: 42,
+    positions: [{ file: 'main.cpp', line: 42 }, { file: 'other.cpp', line: 7 }],
+  }])
   assert.throws(() => parseReport('{}'), /warnings array/)
 })
 
@@ -31,7 +40,10 @@ test('validates plain and fenced answers', () => {
 })
 
 test('builds a batch prompt with the original prompt in each id section', () => {
-  const warning = { code: 'V501', level: 1, message: 'Test', file: 'main.cpp', line: 33 }
+  const warning = {
+    code: 'V501', level: 1, message: 'Test', file: 'main.cpp', line: 33,
+    positions: [{ file: 'main.cpp', line: 33 }],
+  }
   const first = buildPrompt(warning, '>> 33 | first')
   const second = buildPrompt({ ...warning, line: 42 }, '>> 42 | second')
   const [instruction, ...sections] = buildBatchPrompt([
@@ -93,7 +105,10 @@ test('guards source paths and builds a marked snippet', async t => {
   await assert.rejects(sourcePath(root, outside), /outside the project root/)
   await assert.rejects(sourcePath(root, 'linked/private.cpp'), /outside the project root/)
 
-  const warning = { code: 'V501', level: 1, message: 'Test', file: 'main.cpp', line: 33 }
+  const warning = {
+    code: 'V501', level: 1, message: 'Test', file: 'main.cpp', line: 33,
+    positions: [{ file: 'main.cpp', line: 33 }],
+  }
   const snippet = await sourceSnippet(root, warning)
   const lines = snippet.split('\n')
   assert.equal(lines.length, 61)
@@ -101,6 +116,30 @@ test('guards source paths and builds a marked snippet', async t => {
   assert.equal(lines[30], '>> 33 | line 33')
   assert.equal(lines[60], '   63 | line 63')
   assert.match(buildPrompt(warning, snippet), /^Warning: V501 \(level 1\)$/m)
+})
+
+test('adds short snippets for related positions and skips unreadable ones', async t => {
+  const temp = await mkdtemp(join(tmpdir(), 'triage-test-'))
+  t.after(() => rm(temp, { recursive: true, force: true }))
+  const root = join(temp, 'project')
+  await mkdir(root)
+  await writeFile(join(root, 'main.cpp'), Array.from({ length: 80 }, (_, i) => `line ${i + 1}`).join('\n'))
+  await writeFile(join(root, 'other.cpp'), Array.from({ length: 20 }, (_, i) => `other ${i + 1}`).join('\n'))
+
+  const warning = {
+    code: 'V522', level: 1, message: 'Test', file: 'main.cpp', line: 40,
+    positions: [
+      { file: 'main.cpp', line: 40 },
+      { file: 'main.cpp', line: 44 },
+      { file: 'other.cpp', line: 10 },
+      { file: 'missing.cpp', line: 2 },
+    ],
+  }
+  const snippet = await sourceSnippet(root, warning)
+  assert.match(snippet, /Related position: main\.cpp:44\n   41 \| line 41\n   42 \| line 42\n   43 \| line 43\n>> 44 \| line 44\n   45 \| line 45\n   46 \| line 46\n   47 \| line 47/)
+  assert.match(snippet, /Related position: other\.cpp:10\n   7 \| other 7\n   8 \| other 8\n   9 \| other 9\n>> 10 \| other 10\n   11 \| other 11\n   12 \| other 12\n   13 \| other 13/)
+  assert.match(snippet, /Related position: missing\.cpp:2 \(source unavailable\)/)
+  assert.equal(snippet.match(/^>>/gm)?.length, 3)
 })
 
 test('extracts opencode error events from JSONL', () => {

@@ -12,7 +12,8 @@ export type Answer = {
   reason: string
 }
 
-type Warning = { code: string; level: number; message: string; file: string; line: number }
+type Position = { file: string; line: number }
+type Warning = Position & { code: string; level: number; message: string; positions: Position[] }
 export type Row = Warning & {
   status: 'pending' | 'running' | 'done' | 'error' | 'stopped'
   snippet?: string
@@ -34,13 +35,14 @@ export function parseReport(text: string): Warning[] {
     if (typeof code !== 'string' || !code.trim() || typeof message !== 'string' ||
         typeof level !== 'number' || ![1, 2, 3].includes(level) || !Array.isArray(positions)) continue
 
+    const valid: Position[] = []
     for (const position of positions) {
       const { file, line } = object(position)
       if (typeof file !== 'string' || !file.trim() || typeof line !== 'number' ||
           !Number.isSafeInteger(line) || line < 1) continue
-      result.push({ code, level, message, file, line })
-      break
+      if (!valid.some(seen => seen.file === file && seen.line === line)) valid.push({ file, line })
     }
+    if (valid.length) result.push({ code, level, message, ...valid[0], positions: valid })
   }
   return result
 }
@@ -72,18 +74,37 @@ export async function sourcePath(root: string, file: string): Promise<string> {
   return actualFile
 }
 
-export async function sourceSnippet(root: string, warning: Warning): Promise<string> {
-  const path = await sourcePath(root, warning.file)
-  const lines = (await readFile(path, 'utf8')).split(/\r\n|\n|\r/)
-  if (warning.line > lines.length) throw new Error('Warning line is outside the source file.')
-
-  const start = Math.max(0, warning.line - 31)
-  const end = Math.min(lines.length, warning.line + 30)
-  return lines.slice(start, end).map((line, index) => {
+function linesAround(lines: readonly string[], line: number, radius: number): string {
+  const start = Math.max(0, line - radius - 1)
+  const end = Math.min(lines.length, line + radius)
+  return lines.slice(start, end).map((text, index) => {
     const number = start + index + 1
     // minified lines would flood the prompt
-    return `${number === warning.line ? '>>' : '  '} ${number} | ${line.slice(0, 300)}`
+    return `${number === line ? '>>' : '  '} ${number} | ${text.slice(0, 300)}`
   }).join('\n')
+}
+
+export async function sourceSnippet(root: string, warning: Warning): Promise<string> {
+  const files = new Map<string, string[]>()
+  const read = async (file: string) => {
+    const cached = files.get(file)
+    if (cached) return cached
+    const lines = (await readFile(await sourcePath(root, file), 'utf8')).split(/\r\n|\n|\r/)
+    files.set(file, lines)
+    return lines
+  }
+
+  const primary = await read(warning.file)
+  if (warning.line > primary.length) throw new Error('Warning line is outside the source file.')
+  const parts = [linesAround(primary, warning.line, 30)]
+  for (const { file, line } of warning.positions) {
+    if (file === warning.file && line === warning.line) continue
+    // a missing related file should not hide the primary snippet
+    const lines = await read(file).catch(() => undefined)
+    parts.push(`Related position: ${file}:${line}` + (lines && line <= lines.length
+      ? '\n' + linesAround(lines, line, 3) : ' (source unavailable)'))
+  }
+  return parts.join('\n\n')
 }
 
 export function buildPrompt(warning: Warning, snippet: string): string {
