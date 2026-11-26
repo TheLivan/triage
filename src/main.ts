@@ -1,9 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, MenuItem } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { extname, join } from 'node:path'
 import type { RunUpdate } from './preload.ts'
 import {
-  addUsage, buildPrompt, goLimits, noUsage, parseReport, runOpenCode, sourceSnippet, triage, triageBatch, usageCost,
+  addUsage, buildPrompt, csvHeader, parseResults, goLimits, noUsage, parseReport, runOpenCode, sourceSnippet, triage, triageBatch, usageCost,
   type BatchItem, type Price, type Row, type Usage,
 } from './triage.ts'
 
@@ -17,9 +17,10 @@ let usage = noUsage
 const prices = new Map<string, Price>()
 let run: AbortController | undefined
 
-function clear() {
-  if (run) return
-  rows = []
+let warnings: ReturnType<typeof parseReport> = []
+
+function previewReport() {
+  rows = warnings.map(warning => ({ ...warning, status: 'pending' }))
   usage = noUsage
   window.webContents.send('update', { rows })
   window.webContents.send('update', { usage: '' })
@@ -58,18 +59,42 @@ async function confirmEstimate(model: string, billed: number, total: number): Pr
   return response === 0
 }
 
-ipcMain.handle('open-report', async () => {
+ipcMain.handle('open-report', async (_event, saved: boolean) => {
+  if (run) throw new Error('Stop triage before opening a file.')
   const { filePaths } = await dialog.showOpenDialog(window, {
-    properties: ['openFile'], filters: [{ name: 'JSON report', extensions: ['json'] }],
+    properties: ['openFile'], filters: [saved ? { name: 'Saved results', extensions: ['json', 'csv'] }
+      : { name: 'PVS-Studio report', extensions: ['json'] }],
   })
-  if (filePaths.length) { report = filePaths[0]; root ||= dirname(report); clear() }
-  return { report, root }
+  const path = filePaths[0]
+  if (!path) return
+  const text = await readFile(path, 'utf8')
+  if (saved) {
+    const imported = parseResults(text, extname(path).toLowerCase() === '.csv')
+    rows = imported.rows
+    usage = imported.usage
+    warnings = []
+    report = undefined
+    window.webContents.send('update', { rows })
+    window.webContents.send('update', { usage: Object.values(usage).some(Boolean) ? usageText(usage, '') : '' })
+  } else {
+    warnings = parseReport(text)
+    report = path
+    previewReport()
+  }
+  root = undefined
+  return path
 })
 
 ipcMain.handle('open-root', async () => {
+  if (run || !report) throw new Error('Open a report before choosing its source folder.')
   const { filePaths } = await dialog.showOpenDialog(window, { properties: ['openDirectory'] })
-  if (filePaths.length) { root = filePaths[0]; clear() }
+  if (filePaths[0] && filePaths[0] !== root) { root = filePaths[0]; previewReport() }
   return root
+})
+
+ipcMain.handle('context', async (_event, index: number) => {
+  if (!root || !Number.isSafeInteger(index) || !rows[index]) return
+  return sourceSnippet(root, rows[index])
 })
 
 ipcMain.handle('models', async () => {
@@ -142,7 +167,7 @@ ipcMain.handle('start', async (_event, model: string, concurrency: number, maxLe
     usage = noUsage
     send({ rows })
     send({ usage: '' })
-    rows = parseReport(await readFile(report, 'utf8'))
+    rows = warnings
       .filter(warning => warning.level <= maxLevel)
       .map(warning => ({ ...warning, status: 'pending' }))
     runRows = rows
@@ -239,7 +264,7 @@ ipcMain.handle('save', async (_event, format: string) => {
     row.code, row.level, `${row.file}:${row.line}`, row.message,
     row.answer?.verdict, row.answer?.confidence, row.answer?.reason ?? row.error, row.status,
   ].map(csvCell).join(','))
-  await writeFile(filePath, ['Code,Level,File:Line,Message,Verdict,Confidence,Reason,Status', ...records].join('\r\n') + '\r\n', 'utf8')
+  await writeFile(filePath, [csvHeader, ...records].join('\r\n') + '\r\n', 'utf8')
 })
 
 app.whenReady().then(async () => {
@@ -258,6 +283,9 @@ app.whenReady().then(async () => {
   })
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', event => event.preventDefault())
+  const view = Menu.getApplicationMenu()?.items.find(item => item.role?.toLowerCase() === 'viewmenu' || item.label === 'View')?.submenu
+  view?.append(new MenuItem({ type: 'separator' }))
+  view?.append(new MenuItem({ label: 'Toggle light/dark theme', click: () => window.webContents.send('toggle-theme') }))
   await window.loadFile(join(appRoot, 'index.html'))
 }).catch(error => {
   console.error(error)

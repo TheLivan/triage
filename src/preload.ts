@@ -4,7 +4,9 @@ import type { Row } from './triage.ts'
 export type RunUpdate = { rows: Row[] } | { index: number; row: Row } | { usage: string }
 
 export type TriageApi = {
-  openReport: () => Promise<{ report?: string; root?: string }>
+  openReport: (saved: boolean) => Promise<string | undefined>
+  context: (index: number) => Promise<string | undefined>
+  onTheme: (listener: () => void) => void
   openRoot: () => Promise<string | undefined>
   models: () => Promise<string[]>
   start: (model: string, concurrency: number, maxLevel: number) => Promise<void>
@@ -14,7 +16,9 @@ export type TriageApi = {
 }
 
 contextBridge.exposeInMainWorld('triage', {
-  openReport: () => ipcRenderer.invoke('open-report'),
+  openReport: saved => ipcRenderer.invoke('open-report', saved),
+  context: index => ipcRenderer.invoke('context', index),
+  onTheme: listener => { ipcRenderer.on('toggle-theme', () => listener()) },
   openRoot: () => ipcRenderer.invoke('open-root'),
   models: () => ipcRenderer.invoke('models'),
   start: (model, concurrency, maxLevel) => ipcRenderer.invoke('start', model, concurrency, maxLevel),

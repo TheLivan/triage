@@ -6,107 +6,185 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Triage Report</title>
   <style>
-    /* palette from the pvs-studio.com design system (ds.css) */
-    :root { color-scheme: light; --bg: #f0f1f2; --fg: #141414; --panel: #fff; --border: #d4e0ed; --muted: #414f57; --control: #d4e0ed; --hover: #d4f0fe; --accent: #0069e0; --accent-hover: #004ec2; --danger: #b3261e; --row-border: #f0f1f2; --th: #f7f9fb; --row-hover: #f2fafe; --link: #004ec2; --subtle: #f7f9fb; --target: #d4f0fe; --bug-bg: #fde8e7; --bug: #8d2020; --fp-bg: #e1f4eb; --fp: #125c43; --wf-bg: #d4f0fe; --wf: #004ec2; --unsure-bg: #fff1da; --unsure: #754800; }
-    :root[data-theme="dark"] { color-scheme: dark; --bg: #0a192f; --fg: #e6edf5; --panel: #10233f; --border: #1f3a5f; --muted: #a3b4c8; --control: #2a4a73; --hover: #173258; --accent: #0069e0; --accent-hover: #258bff; --danger: #f2a09a; --row-border: #1a3050; --th: #132a4a; --row-hover: #142b4b; --link: #a5e1ff; --subtle: #0d1f38; --target: #1d3f6e; --bug-bg: #3d1f22; --bug: #f3a5a5; --fp-bg: #173528; --fp: #8fdcb7; --wf-bg: #173258; --wf: #a5e1ff; --unsure-bg: #3a2c12; --unsure: #f0c77a; }
+    /* Light palette from the pvs-studio.com design system (ds.css) */
+    :root { color-scheme: light; --bg: #f0f1f2; --fg: #141414; --panel: #fff; --border: #d4e0ed; --muted: #414f57; --control: #d4e0ed; --hover: #d4f0fe; --accent: #0069e0; --accent-hover: #004ec2; --danger: #b3261e; --row-border: #f0f1f2; --th: #f7f9fb; --row-hover: #f2fafe; --link: #004ec2; --subtle: #f7f9fb; --target: #d4f0fe; --selected: #e7f2fe; --bug-bg: #fde8e7; --bug: #8d2020; --fp-bg: #eceef1; --fp: #3f4a52; --wf-bg: #d4f0fe; --wf: #004ec2; --unsure-bg: #fff1da; --unsure: #754800; --error-bg: #efe9fb; --error: #533b8c; }
+    :root[data-theme="dark"] { color-scheme: dark; --bg: #2b2b2b; --fg: #ebedef; --panel: #3c3f41; --border: #515658; --muted: #b0b2b4; --control: #686b6d; --hover: #4c5052; --accent: #376ba6; --accent-hover: #486e99; --danger: #ff9999; --row-border: #484b4d; --th: #45494a; --row-hover: #434749; --link: #8ab4e2; --subtle: #2b2b2b; --target: #344961; --selected: #304b66; --bug-bg: #51383a; --bug: #f29a98; --fp-bg: #45484a; --fp: #c5c8ca; --wf-bg: #344961; --wf: #a1c2e6; --unsure-bg: #504331; --unsure: #e8bd82; --error-bg: #483d50; --error: #d1b2df; }
     * { box-sizing: border-box; }
     html, body { height: 100%; }
     body { margin: 0; padding: 12px; display: flex; flex-direction: column; gap: 8px; background: var(--bg); color: var(--fg); font: 14px/1.45 "Open Sans", -apple-system, "Segoe UI", Arial, sans-serif; }
     .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
     .bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
     .controls { padding: 8px 10px; }
+    .controls .bar { row-gap: 8px; }
     .bar label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
-    .path { color: var(--muted); max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bar label:has(#max-level) { gap: 10px; }
+    .path { color: var(--muted); max-width: 20ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 4px; }
     .spacer { margin-left: auto; }
+    .hint { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
     button, input, select { font: inherit; color: inherit; }
     button, input, select { border: 1px solid var(--control); border-radius: 6px; background: var(--panel); min-height: 30px; padding: 4px 9px; }
-    button { cursor: pointer; border-radius: 999px; padding: 4px 14px; }
+    button { cursor: pointer; padding: 4px 10px; }
     button:hover:enabled { background: var(--hover); }
     button:disabled, select:disabled, input:disabled { opacity: .55; cursor: default; }
-    #start { color: #fff; background: var(--accent); border-color: var(--accent); }
-    #start:hover:enabled { background: var(--accent-hover); }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    #max-level:focus-visible { outline-color: var(--link); outline-offset: -2px; }
+    .primary, #start { color: #fff; background: var(--accent); border-color: var(--accent); font-weight: 600; }
+    .primary:hover:enabled, #start:hover:enabled { background: var(--accent-hover); }
     #stop:enabled { color: var(--danger); border-color: var(--danger); }
     #model { min-width: 180px; max-width: min(360px, 50vw); }
+    #model-settings { color: var(--fg); width: min(36rem, 94vw); padding: 18px; }
+    #model-settings h2 { margin: 0 0 12px; font-size: 18px; }
+    #model-settings::backdrop { background: rgb(0 0 0 / 35%); }
+    #model-search { width: 100%; }
+    #model-actions, #model-settings footer { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+    #model-count { margin-right: auto; color: var(--muted); }
+    #model-options { height: min(40vh, 24rem); overflow: auto; margin-top: 8px; border-block: 1px solid var(--border); scrollbar-gutter: stable; }
+    #model-options label { display: flex; align-items: center; gap: 8px; padding: 6px; overflow-wrap: anywhere; cursor: pointer; }
+    #model-options label:hover { background: var(--hover); }
+    #model-options input { min-height: 0; accent-color: var(--accent); }
+    #model-settings footer { justify-content: flex-end; }
+    #model-save:enabled { color: white; background: var(--accent); }
     #concurrency { width: 64px; }
-    progress { width: 200px; accent-color: var(--accent); }
+    .advanced { color: var(--muted); }
+    .advanced summary { display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 4px 12px; border: 1px solid var(--control); border-radius: 6px; cursor: pointer; list-style: none; }
+    .advanced summary::-webkit-details-marker { display: none; }
+    .advanced summary::after { content: "▾"; font-size: 10px; }
+    .advanced[open] summary { color: var(--fg); background: var(--hover); }
+    .advanced[open] summary::after { content: "▴"; }
+    .advanced:has(input:invalid) summary { color: var(--danger); border-color: var(--danger); }
+    [hidden] { display: none !important; }
+    #welcome { flex: 1; display: grid; place-content: center; text-align: center; }
+    #welcome h1 { font-size: 22px; margin: 0; }
+    #welcome p { margin: 6px 0 20px; color: var(--muted); }
+    #welcome .bar { justify-content: center; }
+    .advanced { position: relative; }
+    .advanced .popover { position: absolute; right: 0; top: 100%; z-index: 3; min-width: 14rem; padding: 12px; display: grid; gap: 8px; }
+    .popover label { justify-content: space-between; }
+    #open-root:has(#root-path:empty) { background: var(--accent); color: white; }
+    #open-root:has(#root-path:empty)::after { content: "Choose source folder…"; }
+    .path { display: inline-block; vertical-align: bottom; color: inherit; }
+    progress { width: min(220px, 36vw); accent-color: var(--accent); }
     #count, #filter button { font-variant-numeric: tabular-nums; }
     #usage { color: var(--muted); }
     #error { margin: 0; color: var(--danger); white-space: pre-wrap; overflow-wrap: anywhere; }
     #error:empty { display: none; }
     #filter { display: flex; flex-wrap: wrap; gap: 6px; margin-right: auto; }
-    #filter button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
-    .results { flex: 1; min-height: 0; overflow: auto; }
-    table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 760px; }
-    th, td { border-bottom: 1px solid var(--row-border); padding: 7px 10px; text-align: left; vertical-align: top; }
-    th { position: sticky; top: 0; background: var(--th); white-space: nowrap; border-bottom-color: var(--border); }
+    #filter button { min-height: 28px; padding: 2px 12px; }
+    #filter button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); font-weight: 600; }
+    .workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 8px; }
+    .results { overflow: auto; }
+    table { border-collapse: separate; border-spacing: 0; width: 100%; }
+    th, td { border-bottom: 1px solid var(--row-border); padding: 4px 8px; text-align: left; vertical-align: top; }
+    th { position: sticky; top: 0; z-index: 1; background: var(--th); white-space: nowrap; border-bottom-color: var(--border); }
     th button, .file { border: 0; border-radius: 0; padding: 0; min-height: 0; background: transparent; text-align: left; }
     th button { font-weight: 650; }
     th[aria-sort="ascending"] button::after { content: " ↑"; }
     th[aria-sort="descending"] button::after { content: " ↓"; }
-    tr[data-index] { cursor: pointer; }
-    tr[data-index]:hover { background: var(--row-hover); }
+    th:first-child, th:last-child { width: 1%; }
+    td:first-child { white-space: nowrap; }
+    .location { display: block; direction: rtl; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    td:nth-child(3) { max-width: 1px; }
+    th:nth-child(3) { width: 28%; }
+    tbody tr[data-index] { cursor: pointer; }
+    tbody tr[data-index]:hover { background: var(--row-hover); }
+    tbody tr[aria-selected="true"], tbody tr[aria-selected="true"]:hover { background: var(--selected); box-shadow: inset 3px 0 0 var(--accent); }
+    tbody tr:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+    tbody tr[aria-selected="true"]:focus-visible { box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 2px var(--accent); }
     td { overflow-wrap: anywhere; }
-    td:nth-child(3) { width: 14%; }
-    td:nth-child(4), td:nth-child(7) { width: 30%; }
     .file { color: var(--link); overflow-wrap: anywhere; }
     .file:hover { text-decoration: underline; }
-    .empty, .detail { background: var(--subtle); color: var(--muted); }
-    .detail pre { margin: 3px 0; overflow-x: auto; font-size: 13px; }
-    .detail pre span { display: block; }
-    .detail pre .target { background: var(--target); color: var(--fg); }
-    .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--subtle); white-space: nowrap; }
-    .bug, .error { background: var(--bug-bg); color: var(--bug); }
-    .false_positive { background: var(--fp-bg); color: var(--fp); }
+    .empty { padding: 28px 16px; text-align: center; background: var(--subtle); color: var(--muted); }
+    #detail { padding: 10px 12px; overflow: auto; }
+    #detail:empty::before { content: "Select a warning to see its source and model reasoning."; color: var(--muted); }
+    #detail > * { margin-top: 0; }
+    #detail > * + * { margin-top: 8px; }
+    #detail :where(h2, h3) { margin: 0; font-size: 15px; }
+    #detail pre { margin: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--subtle); overflow: auto; max-height: 46vh; font-size: 13px; line-height: 1.4; }
+    #detail pre span { display: block; min-width: max-content; white-space: pre; }
+    #detail pre .target { background: var(--target); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
+    #detail .meta { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 10px; }
+    #detail .meta dt { color: var(--muted); }
+    #detail .meta dd { margin: 0; overflow-wrap: anywhere; }
+    .badge { display: inline-block; padding: 1px 8px; border: 1px solid transparent; border-radius: 999px; background: var(--subtle); white-space: nowrap; font-weight: 600; }
+    .bug { background: var(--bug-bg); color: var(--bug); }
+    .false_positive { background: var(--fp-bg); color: var(--fp); border-color: var(--border); }
     .running { background: var(--wf-bg); color: var(--wf); }
     .unsure { background: var(--unsure-bg); color: var(--unsure); }
+    .error { background: var(--error-bg); color: var(--error); }
+    @media (max-width: 900px) {
+      .workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 38%); }
+    }
+    .workspace:has(#detail[hidden]) { grid-template: 1fr / 1fr; }
   </style>
   <script defer src="build/renderer.js"></script>
 </head>
 <body>
-  <section class="panel controls bar" aria-label="Triage controls">
-    <button id="open-report">Report…</button><span class="path" id="report-path"></span>
-    <button id="open-root">Root…</button><span class="path" id="root-path"></span>
-    <span class="sep"></span>
-    <label>Model <select id="model" disabled><option value="">Loading models…</option></select></label>
-    <label>Batches <input type="number" id="concurrency" min="1" max="16" step="1" value="4" required></label>
-    <label title="Highest PVS-Studio warning level to triage">Max level <select id="max-level"><option>1</option><option selected>2</option><option>3</option></select></label>
-    <button id="start" disabled>Start</button>
-    <button id="stop" disabled>Stop</button>
-    <button id="theme" class="spacer" aria-label="Toggle dark theme"></button>
-  </section>
-  <div class="bar">
-    <progress id="progress" aria-label="Triage progress" max="1" value="0"></progress>
-    <output id="count">0 / 0</output>
-    <output id="usage"></output>
-    <p id="error" role="alert"></p>
-  </div>
-  <div class="bar">
-    <div id="filter" role="group" aria-label="Filter by verdict">
-      <button data-verdict="" aria-pressed="true"></button>
-      <button data-verdict="bug" class="bug" aria-pressed="false"></button>
-      <button data-verdict="false_positive" class="false_positive" aria-pressed="false"></button>
-      <button data-verdict="unsure" class="unsure" aria-pressed="false"></button>
-      <button data-verdict="error" class="error" aria-pressed="false"></button>
+  <dialog class="panel" id="model-settings" aria-labelledby="model-settings-title">
+    <h2 id="model-settings-title">Models shown in the list</h2>
+    <input type="search" id="model-search" aria-label="Search by model or provider" placeholder="Search by model or provider" autofocus>
+    <div id="model-actions">
+      <span id="model-count" role="status"></span>
+      <button id="models-select">Select all</button><button id="models-clear">Clear all</button>
     </div>
-    <button data-export="csv" disabled>Export CSV</button>
-    <button data-export="json" disabled>Export JSON</button>
+    <div id="model-options"></div>
+    <footer><button id="model-cancel">Cancel</button><button id="model-save">Save</button></footer>
+  </dialog>
+  <main class="panel" id="welcome">
+    <div>
+      <h1>Open a report</h1>
+      <p>Analyze a PVS-Studio JSON report or review saved results.</p>
+      <div class="bar"><button class="primary" data-open="report">Open report…</button><button data-open="saved">Open saved results…</button></div>
+    </div>
+  </main>
+  <section class="panel controls" id="toolbar" aria-label="Triage controls" hidden>
+    <div class="bar">
+      <details class="advanced"><summary><span class="path" id="report-path"></span></summary>
+        <div class="panel popover" style="left:0;right:auto"><button data-open="report">Open report…</button><button data-open="saved">Open saved results…</button></div>
+      </details>
+      <button id="open-root" aria-label="Choose source folder"><span class="path" id="root-path"></span></button>
+      <label id="model-label">Model <select id="model" disabled><option value="">Loading models…</option></select></label>
+      <details id="advanced" class="advanced">
+        <summary>Advanced</summary>
+        <div class="panel popover">
+          <label>Max warning level <select id="max-level"><option>1</option><option selected>2</option><option>3</option></select></label>
+          <span class="hint">Include warnings up to this PVS-Studio level.</span>
+          <label>Parallel batches <input type="number" id="concurrency" min="1" max="16" step="1" value="4" required></label>
+        </div>
+      </details>
+      <div class="bar spacer">
+        <progress hidden id="progress" aria-label="Triage progress" max="1" value="0"></progress><output hidden id="count"></output>
+        <button id="start" disabled>Start triage</button><button id="stop" hidden>Stop</button>
+      </div>
+    </div>
+  </section>
+  <p id="error" role="alert"></p>
+  <div class="bar" id="result-tools" hidden>
+    <div id="filter" role="group" aria-label="Filter by verdict">
+      <button data-verdict="" aria-pressed="true">all 0</button>
+      <button data-verdict="bug" class="bug" aria-pressed="false">bug 0</button>
+      <button data-verdict="false_positive" class="false_positive" aria-pressed="false">false positive 0</button>
+      <button data-verdict="unsure" class="unsure" aria-pressed="false">unsure 0</button>
+      <button data-verdict="error" class="error" aria-pressed="false">error 0</button>
+    </div>
+    <output id="usage" aria-label="Token usage"></output>
+    <select id="export" aria-label="Export results"><option value="" hidden>Export…</option><option value="json">JSON</option><option value="csv">CSV</option></select>
   </div>
-  <div class="panel results">
-    <table aria-label="Triage results">
-      <thead>
-        <tr>
-          <th scope="col"><button>Code</button></th>
-          <th scope="col"><button>Level</button></th>
-          <th scope="col"><button>File:Line</button></th>
-          <th scope="col"><button>Message</button></th>
-          <th scope="col"><button>Verdict</button></th>
-          <th scope="col"><button>Confidence</button></th>
-          <th scope="col"><button>Reason</button></th>
-        </tr>
-      </thead>
-      <tbody><tr><td class="empty" colspan="7">Open a report to start.</td></tr></tbody>
-    </table>
+  <div class="workspace" hidden>
+    <div class="panel results">
+      <table aria-label="Triage results">
+        <thead>
+          <tr>
+            <th scope="col" title="PVS-Studio warning code"><button>Code</button></th>
+            <th scope="col" title="Warning message"><button>Warning</button></th>
+            <th scope="col" title="File and line"><button>Location</button></th>
+            <th scope="col" title="Model verdict"><button>Verdict</button></th>
+          </tr>
+        </thead>
+        <tbody><tr><td class="empty" colspan="4">Open a report, choose its source root, then start triage.</td></tr></tbody>
+      </table>
+    </div>
+    <section id="detail" class="panel" aria-label="Warning details" tabindex="-1"></section>
   </div>
 </body>
 </html>

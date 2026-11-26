@@ -29,6 +29,10 @@ export function parseReport(text: string): Warning[] {
   const { warnings } = object(JSON.parse(text.replace(/^\uFEFF/, '')))
   if (!Array.isArray(warnings)) throw new Error('Expected a warnings array in the report.')
 
+  return parseWarnings(warnings)
+}
+
+function parseWarnings(warnings: unknown[]): Warning[] {
   const result: Warning[] = []
   for (const item of warnings) {
     const { code, level, message, positions } = object(item)
@@ -45,6 +49,52 @@ export function parseReport(text: string): Warning[] {
     if (valid.length) result.push({ code, level, message, ...valid[0], positions: valid })
   }
   return result
+}
+
+export const csvHeader = 'Code,Level,File:Line,Message,Verdict,Confidence,Reason,Status'
+
+function csvRows(text: string): unknown[] {
+  const newline = text.indexOf('\n')
+  if ((newline < 0 ? text : text.slice(0, newline)).trimEnd() !== csvHeader) throw new Error('Expected a Triage Report CSV export.')
+  const result: unknown[] = []
+  const field = /(?:"((?:[^"]|"")*)"|([^",\r\n]*))(,|\r?\n|$)/gy
+  field.lastIndex = newline < 0 ? text.length : newline + 1
+  let cells: string[] = []
+  while (field.lastIndex < text.length) {
+    const match = field.exec(text)
+    if (!match) throw new Error('Invalid CSV field.')
+    cells.push((match[1]?.replaceAll('""', '"') ?? match[2]).replace(/^'(?=\s*[=+\-@]|[\t\r\n])/, ''))
+    if (match[3] === ',') continue
+    const [code, level, location, message, verdict, confidence, reason, status] = cells
+    const position = /^(.*):(\d+)$/s.exec(location)
+    if (cells.length !== 8 || !position) throw new Error('Invalid results CSV row.')
+    result.push({ code, level: Number(level), message, positions: [{ file: position[1], line: Number(position[2]) }],
+      status, answer: verdict ? { verdict, confidence, reason } : undefined, error: status === 'error' ? reason : undefined })
+    cells = []
+  }
+  if (cells.length) throw new Error('Incomplete results CSV row.')
+  return result
+}
+
+export function parseResults(text: string, csv: boolean): { rows: Row[]; usage: Usage } {
+  text = text.replace(/^\uFEFF/, '')
+  const data = csv ? { rows: csvRows(text), usage: noUsage } : object(JSON.parse(text))
+  if (!Array.isArray(data.rows)) throw new Error('Expected an exported results file with a rows array.')
+  const usage = { ...noUsage }
+  for (const key of Object.keys(usage) as (keyof Usage)[]) {
+    const value = object(data.usage)[key] ?? 0
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw new Error('Invalid token usage.')
+    usage[key] = value
+  }
+  const rows = data.rows.map((item): Row => {
+    const [warning] = parseWarnings([item])
+    const { status, answer, error } = object(item)
+    if (!warning || (status !== 'done' && status !== 'error' && status !== 'pending' && status !== 'running' && status !== 'stopped')
+        || (error !== undefined && typeof error !== 'string')) throw new Error('Invalid warning in saved results.')
+    return { ...warning, status: status === 'running' || status === 'pending' ? 'stopped' : status,
+      answer: status === 'done' ? validateAnswer(answer) : undefined, error }
+  })
+  return { rows, usage }
 }
 
 function inside(root: string, target: string): boolean {

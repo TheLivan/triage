@@ -3,7 +3,7 @@ import { copyFile, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { addUsage, buildBatchPrompt, buildPrompt, eventError, noUsage, usageCost, usageOf, parseAnswer, parseBatchAnswer, parseReport, sourcePath, sourceSnippet, triage } from '../src/triage.ts'
+import { addUsage, buildBatchPrompt, buildPrompt, eventError, noUsage, usageCost, usageOf, parseAnswer, parseBatchAnswer, parseReport, parseResults, csvHeader, sourcePath, sourceSnippet, triage } from '../src/triage.ts'
 
 test('parses every valid position and skips warnings without one', () => {
   const warning = { code: 'V501', level: 1, message: 'Duplicate operands' }
@@ -185,4 +185,27 @@ test('counts usage of a failed opencode call', async t => {
   let usage = noUsage
   await assert.rejects(triage(dir, 'x/y', 'prompt', new AbortController().signal, call => { usage = addUsage(usage, call) }))
   assert.deepEqual(usage, { input: 700, output: 50, cacheRead: 0, cacheWrite: 0 })
+})
+
+test('opens saved JSON results and freezes unfinished rows', () => {
+  const warning = { code: 'V1', level: 1, message: 'Check', file: 'a.cpp', line: 2, positions: [{ file: 'a.cpp', line: 2 }] }
+  const answer = { verdict: 'bug', confidence: 'high', reason: 'Duplicate.' }
+  const usage = { ...noUsage, output: 10 }
+  const data = { rows: [{ ...warning, status: 'done', answer }, { ...warning, status: 'running' }], usage }
+  const imported = parseResults(JSON.stringify(data), false)
+  assert.deepEqual(imported.rows[0].answer, answer)
+  assert.equal(imported.rows[1].status, 'stopped')
+  assert.deepEqual(imported.usage, usage)
+  assert.throws(() => parseResults(JSON.stringify({ rows: [{ ...warning, status: 'done' }] }), false))
+  assert.throws(() => parseResults('{"warnings":[]}', false))
+})
+
+test('opens legacy CSV with quoted multiline reasons and drive-letter paths', () => {
+  const record = '"V2","2","C:/src/a.cpp:42","Check, again","unsure","low","Missing ""x"".\r\nMore.","done"'
+  const { rows } = parseResults(csvHeader + '\r\n' + record + '\r\n', true)
+  assert.equal(rows[0].file, 'C:/src/a.cpp')
+  assert.equal(rows[0].line, 42)
+  assert.equal(rows[0].answer?.reason, 'Missing "x".\r\nMore.')
+  assert.equal(parseResults(csvHeader + '\n', true).rows.length, 0)
+  assert.throws(() => parseResults(csvHeader + '\n"unfinished', true))
 })
