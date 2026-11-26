@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, target: linux-x64, extension: tar.gz }
+          - { runner: windows-2025, target: windows-x64, extension: zip }
+          - { runner: macos-15, target: macos-arm64, extension: zip }
+          - { runner: macos-15-intel, target: macos-x64, extension: zip }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npx --no tsc
+      - run: npx --no install-electron
+      - name: Package Electron app
+        shell: bash
+        env:
+          ARCHIVE: triage-report-${{ matrix.target }}.${{ matrix.extension }}
+        run: |
+          dist=node_modules/electron/dist
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            mv "$dist/Electron.app" "$dist/Triage Report.app"
+            app_dir="$dist/Triage Report.app/Contents/Resources/app"
+          else
+            app_dir="$dist/resources/app"
+          fi
+          mkdir -p "$app_dir"
+          cp -R build package.json index.html icon.png DIAGNOSTICS.md opencode.json LICENSE "$app_dir/"
+
+          case "$RUNNER_OS" in
+            macOS)
+              codesign --force --deep --sign - "$dist/Triage Report.app"
+              ditto -c -k "$dist" "$ARCHIVE"
+              ;;
+            Windows)
+              mv "$dist/electron.exe" "$dist/triage-report.exe"
+              tar.exe -a -cf "$ARCHIVE" -C "$dist" .
+              ;;
+            Linux)
+              mv "$dist/electron" "$dist/triage-report"
+              tar -czf "$ARCHIVE" -C "$dist" .
+              ;;
+          esac
+      - uses: actions/upload-artifact@v7
+        with:
+          name: triage-report-${{ matrix.target }}
+          path: triage-report-${{ matrix.target }}.${{ matrix.extension }}
+          if-no-files-found: error
+          compression-level: 0
+          overwrite: true
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: release
+          pattern: triage-report-*
+          merge-multiple: true
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes release/triage-report-*
