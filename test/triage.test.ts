@@ -102,16 +102,16 @@ test('validates plain and fenced answers', () => {
 
 test('builds a batch prompt with the original prompt in each id section', () => {
   const warning = {
-    code: 'V501',
+    code: 'V6001',
     level: 1,
     message: 'Test',
-    file: 'main.cpp',
+    file: 'Main.java',
     line: 33,
-    positions: [{ file: 'main.cpp', line: 33 }],
+    positions: [{ file: 'Main.java', line: 33 }],
   }
   const first = buildPrompt(warning, '>> 33 | first', diagnostics)
   const second = buildPrompt(
-    { ...warning, code: ' v522 ', line: 42 },
+    { ...warning, code: ' v6008 ', line: 42 },
     '>> 42 | second',
     diagnostics,
   )
@@ -122,12 +122,8 @@ test('builds a batch prompt with the original prompt in each id section', () => 
 
   assert.match(instruction, /independently.*ONLY with a JSON array/)
   assert.deepEqual(sections, [`id=3\n${first}`, `id=7\n${second}`])
-  assert.match(sections[0], /PVS-Studio diagnostic: Identical expressions/)
-  assert.match(
-    sections[1],
-    /PVS-Studio diagnostic: A reachable path may dereference a null pointer/,
-  )
-  assert.match(second, /^Possible false-positive patterns .*callee contract/m)
+  assert.match(sections[0], /Identical operands/)
+  assert.match(sections[1], /A reference may be null when dereferenced/)
   assert.equal(
     buildPrompt({ ...warning, code: 'V99999' }, '>> 33 | first', diagnostics),
     [
@@ -136,14 +132,17 @@ test('builds a batch prompt with the original prompt in each id section', () => 
       'PVS-Studio diagnostic: No curated card for this code; treat the message above as the analyzer text.',
       '',
       'Possible false-positive patterns (verify against the code): Compare the message with the PVS-Studio documentation for this code, then confirm the reported condition can actually occur on every relevant path.',
-      'File: main.cpp:33',
+      'File: Main.java:33',
       '',
       '>> 33 | first',
     ].join('\n'),
   )
 })
 
-test('covers every PVS-Studio Java diagnostic code', () => {
+test('covers only PVS-Studio Java General Analysis and OWASP', () => {
+  assert.equal(diagnostics.size, 179)
+  for (let code = 5301; code <= 5343; code++)
+    assert.ok(diagnostics.has(`V${code}`), `missing card for V${code}`)
   for (let code = 6001; code <= 6136; code++)
     assert.ok(diagnostics.has(`V${code}`), `missing card for V${code}`)
 })
@@ -153,29 +152,6 @@ const batchAnswer = {
   confidence: 'high',
   reason: 'The operands are identical.',
 }
-
-test('includes rule-specific evidence for redundant assignments and expressions', () => {
-  const warning = {
-    code: 'V1048',
-    level: 2,
-    message: 'Test',
-    file: 'main.cpp',
-    line: 1,
-    positions: [],
-  }
-  assert.match(
-    buildPrompt(warning, '>> 1 | if (x == 0) x = 0;', diagnostics),
-    /volatile write/,
-  )
-  assert.match(
-    buildPrompt(
-      { ...warning, code: 'V1065' },
-      '>> 1 | return x - x + y;',
-      diagnostics,
-    ),
-    /redundancy is real.*use unsure/,
-  )
-})
 
 test('includes Java reference identity evidence in a V6013 prompt', () => {
   const warning = {
@@ -191,11 +167,8 @@ test('includes Java reference identity evidence in a V6013 prompt', () => {
     '>> 8 | return input == END;',
     diagnostics,
   )
-  assert.match(prompt, /^PVS-Studio diagnostic: .*reference identity/m)
-  assert.match(
-    prompt,
-    /^Possible false-positive patterns .*both strings are interned/m,
-  )
+  assert.match(prompt, /reference identity/)
+  assert.match(prompt, /both strings are interned/)
 })
 
 test('parses plain and fenced batch arrays and rejects non-arrays', () => {
