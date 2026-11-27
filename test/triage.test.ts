@@ -282,6 +282,25 @@ test('guards source paths and builds a marked snippet', async (t) => {
   )
 })
 
+test('limits the primary Java snippet to 60 lines on each side', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'triage-test-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  await writeFile(join(root, 'Main.java'), Array(200).fill('code').join('\n'))
+  const snippet = await sourceSnippet(root, {
+    code: 'V6001',
+    level: 1,
+    message: 'Test',
+    file: 'Main.java',
+    line: 100,
+    positions: [],
+  })
+  const lines = snippet.split('\n')
+  assert.equal(lines.length, 121)
+  assert.equal(lines[0], '   40 | code')
+  assert.equal(lines[60], '>> 100 | code')
+  assert.equal(lines[120], '   160 | code')
+})
+
 test('adds short snippets for related positions and skips unreadable ones', async (t) => {
   const temp = await mkdtemp(join(tmpdir(), 'triage-test-'))
   t.after(() => rm(temp, { recursive: true, force: true }))

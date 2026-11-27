@@ -253,7 +253,8 @@ export async function sourceSnippet(
   const primary = await read(warning.file)
   if (warning.line > primary.length)
     throw new Error('Warning line is outside the source file.')
-  const parts = [linesAround(primary, warning.line, 30)]
+  const radius = /\.java$/i.test(warning.file) ? 60 : 30
+  const parts = [linesAround(primary, warning.line, radius)]
   for (const { file, line } of warning.positions) {
     if (file === warning.file && line === warning.line) continue
     const lines = await read(file).catch(() => undefined)
